@@ -76,6 +76,48 @@ exports.handler = async (event, context) => {
   }
 };
 
+function getASN1Length(bytes, offset) {
+  // Read ASN.1 length field
+  const firstByte = bytes.charCodeAt(offset);
+  
+  if ((firstByte & 0x80) === 0) {
+    // Short form: length is in the first byte
+    return { length: firstByte, headerLength: 1 };
+  } else {
+    // Long form: first byte tells us how many following bytes contain the length
+    const numLengthBytes = firstByte & 0x7F;
+    let length = 0;
+    
+    for (let i = 0; i < numLengthBytes; i++) {
+      length = (length << 8) | bytes.charCodeAt(offset + 1 + i);
+    }
+    
+    return { length: length, headerLength: 1 + numLengthBytes };
+  }
+}
+
+function extractPKCS7Only(signatureBytes) {
+  // Parse the top-level SEQUENCE to get exact length
+  // ASN.1 structure: TAG (1 byte) + LENGTH (1+ bytes) + VALUE
+  
+  if (signatureBytes.length < 2) {
+    throw new Error('Signature too short');
+  }
+  
+  const tag = signatureBytes.charCodeAt(0);
+  
+  // Should be SEQUENCE (0x30)
+  if (tag !== 0x30) {
+    throw new Error('Invalid ASN.1 tag, expected SEQUENCE');
+  }
+  
+  const lengthInfo = getASN1Length(signatureBytes, 1);
+  const totalLength = 1 + lengthInfo.headerLength + lengthInfo.length;
+  
+  // Return only the PKCS#7 portion (no trailing data)
+  return signatureBytes.substring(0, totalLength);
+}
+
 async function verifyPAdESSignature(pdfBuffer, fileName) {
   try {
     const pdfString = pdfBuffer.toString('latin1');
@@ -142,10 +184,19 @@ async function verifyPAdESSignature(pdfBuffer, fileName) {
       };
     }
 
+    // Extract only the PKCS#7 structure (remove trailing data)
+    let pkcs7Bytes;
+    try {
+      pkcs7Bytes = extractPKCS7Only(signatureBytes);
+    } catch (e) {
+      console.error('PKCS#7 extraction error:', e);
+      pkcs7Bytes = signatureBytes; // Try with full data if extraction fails
+    }
+
     // Parse PKCS#7
     let p7;
     try {
-      const der = forge.util.createBuffer(signatureBytes, 'raw');
+      const der = forge.util.createBuffer(pkcs7Bytes, 'raw');
       const asn1 = forge.asn1.fromDer(der);
       p7 = forge.pkcs7.messageFromAsn1(asn1);
     } catch (e) {
