@@ -11,6 +11,11 @@ const resultTitle = document.getElementById('resultTitle');
 const resultDetails = document.getElementById('resultDetails');
 const errorMessage = document.getElementById('errorMessage');
 
+// Ensure initial UI is clean
+document.addEventListener('DOMContentLoaded', () => {
+    try { hideLoading(); hideError(); } catch (e) {}
+});
+
 // Configuration
 const CONFIG = {
     MAX_FILE_SIZE: 6 * 1024 * 1024, // 6MB
@@ -175,16 +180,15 @@ uploadSection.addEventListener('drop', (e) => {
 });
 
 uploadSection.addEventListener('click', () => {
-    if (!loading.classList.contains('show')) {
-        fileInput.click();
-    }
+    if (!fileInput) { showError('File picker unavailable. Please reload the page.','error'); return; }
+    fileInput.click();
 });
 
 browseBtn.addEventListener('click', (e) => {
+    e.preventDefault();
     e.stopPropagation();
-    if (!loading.classList.contains('show')) {
-        fileInput.click();
-    }
+    if (!fileInput) { showError('File picker unavailable. Please reload the page.','error'); return; }
+    fileInput.click();
 });
 
 fileInput.addEventListener('change', (e) => {
@@ -213,7 +217,7 @@ async function handleFile(file) {
         showLoading('Converting file...');
         
         // Convert to base64 with chunking for large files
-        base64Data = arrayBufferToBase64(arrayBuffer);
+        base64Data = await arrayBufferToBase64(arrayBuffer);
         
         showLoading('Determining file type...');
         
@@ -273,7 +277,7 @@ function fileToArrayBuffer(file) {
 }
 
 // Enhanced base64 conversion with chunking
-function arrayBufferToBase64(buffer) {
+async function arrayBufferToBase64(buffer) {
     if (!buffer || buffer.byteLength === 0) {
         throw new Error('Invalid or empty buffer');
     }
@@ -287,9 +291,8 @@ function arrayBufferToBase64(buffer) {
             const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
             binary += String.fromCharCode.apply(null, chunk);
             
-            // Allow other tasks to run
+            // Yield for large files
             if (i % (chunkSize * 4) === 0) {
-                // Yield to browser for large files
                 await new Promise(resolve => setTimeout(resolve, 0));
             }
         }
