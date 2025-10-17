@@ -78,15 +78,26 @@ exports.handler = async (event, context) => {
 
 async function verifyPAdESSignature(pdfBuffer, fileName) {
   try {
-    const pdfString = pdfBuffer.toString('binary');
+    const pdfString = pdfBuffer.toString('latin1');
     
+    // Check if it's a valid PDF
+    if (!pdfString.startsWith('%PDF-')) {
+      return {
+        valid: false,
+        format: 'PAdES',
+        fileName: fileName,
+        error: 'Not a valid PDF file'
+      };
+    }
+
+    // Find ByteRange
     const byteRangeMatch = pdfString.match(/\/ByteRange\s*\[\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*\]/);
     if (!byteRangeMatch) {
       return {
         valid: false,
         format: 'PAdES',
         fileName: fileName,
-        error: 'No valid PAdES signature found'
+        error: 'No valid PAdES signature found (no ByteRange)'
       };
     }
 
@@ -97,28 +108,63 @@ async function verifyPAdESSignature(pdfBuffer, fileName) {
       parseInt(byteRangeMatch[4])
     ];
 
+    // Validate ByteRange values
+    if (byteRange[0] < 0 || byteRange[1] <= 0 || byteRange[2] <= 0 || byteRange[3] <= 0) {
+      return {
+        valid: false,
+        format: 'PAdES',
+        fileName: fileName,
+        error: 'Invalid ByteRange values'
+      };
+    }
+
+    // Extract signature hex
     const signatureHex = extractSignatureHex(pdfString, byteRange);
     if (!signatureHex) {
       return {
         valid: false,
         format: 'PAdES',
         fileName: fileName,
-        error: 'Could not extract signature'
+        error: 'Could not extract signature from Contents'
       };
     }
 
-    const signatureBytes = hexToBytes(signatureHex);
-    
-    let p7;
+    // Convert hex to bytes
+    let signatureBytes;
     try {
-      const asn1 = forge.asn1.fromDer(forge.util.createBuffer(signatureBytes));
-      p7 = forge.pkcs7.messageFromAsn1(asn1);
+      signatureBytes = hexToBytes(signatureHex);
     } catch (e) {
       return {
         valid: false,
         format: 'PAdES',
         fileName: fileName,
-        error: 'Invalid PKCS#7 structure'
+        error: 'Invalid signature hex encoding'
+      };
+    }
+
+    // Parse PKCS#7
+    let p7;
+    try {
+      const der = forge.util.createBuffer(signatureBytes, 'raw');
+      const asn1 = forge.asn1.fromDer(der);
+      p7 = forge.pkcs7.messageFromAsn1(asn1);
+    } catch (e) {
+      console.error('PKCS#7 parsing error:', e);
+      return {
+        valid: false,
+        format: 'PAdES',
+        fileName: fileName,
+        error: 'Invalid PKCS#7 structure: ' + e.message
+      };
+    }
+
+    // Verify it's a signed data structure
+    if (!p7.rawCapture || !p7.rawCapture.signature) {
+      return {
+        valid: false,
+        format: 'PAdES',
+        fileName: fileName,
+        error: 'Not a valid signed data structure'
       };
     }
 
@@ -127,13 +173,14 @@ async function verifyPAdESSignature(pdfBuffer, fileName) {
         valid: false,
         format: 'PAdES',
         fileName: fileName,
-        error: 'No certificates found'
+        error: 'No certificates found in signature'
       };
     }
 
     const signerCert = p7.certificates[0];
     const signerInfo = extractCertificateInfo(signerCert);
 
+    // Get the signed data (ByteRange portions)
     const signedData = Buffer.concat([
       pdfBuffer.slice(byteRange[0], byteRange[0] + byteRange[1]),
       pdfBuffer.slice(byteRange[2], byteRange[2] + byteRange[3])
@@ -147,6 +194,7 @@ async function verifyPAdESSignature(pdfBuffer, fileName) {
       const attrs = p7.rawCapture.authenticatedAttributes;
       
       if (attrs) {
+        // Verify signature on authenticated attributes
         const set = forge.asn1.create(
           forge.asn1.Class.UNIVERSAL,
           forge.asn1.Type.SET,
@@ -162,6 +210,7 @@ async function verifyPAdESSignature(pdfBuffer, fileName) {
         const publicKey = signerCert.publicKey;
         signatureValid = publicKey.verify(md.digest().bytes(), signature);
         
+        // Verify message digest in authenticated attributes matches content
         let contentDigestValid = false;
         const contentMd = forge.md[hashAlgorithm].create();
         contentMd.update(signedData.toString('binary'));
@@ -183,10 +232,11 @@ async function verifyPAdESSignature(pdfBuffer, fileName) {
         signatureValid = signatureValid && contentDigestValid;
         
         if (!contentDigestValid) {
-          verificationError = 'Content digest mismatch';
+          verificationError = 'Content digest mismatch - document may have been modified';
         }
         
       } else {
+        // No authenticated attributes - verify signature directly on content
         const md = forge.md[hashAlgorithm].create();
         md.update(signedData.toString('binary'));
         
@@ -195,16 +245,19 @@ async function verifyPAdESSignature(pdfBuffer, fileName) {
       }
       
     } catch (e) {
+      console.error('Signature verification error:', e);
       verificationError = e.message;
       signatureValid = false;
     }
 
+    // Check certificate validity
     const now = new Date();
     const certValid = now >= signerCert.validity.notBefore && 
                      now <= signerCert.validity.notAfter;
 
     const isSelfSigned = signerCert.issuer.hash === signerCert.subject.hash;
 
+    // Extract signing time
     let signatureDate = 'Unknown';
     try {
       const attrs = p7.rawCapture.authenticatedAttributes;
@@ -260,11 +313,12 @@ async function verifyPAdESSignature(pdfBuffer, fileName) {
       result.warnings.push('Verification issue: ' + verificationError);
     }
 
-    result.warnings.push('CRL/OCSP not checked');
+    result.warnings.push('CRL/OCSP revocation status not checked');
 
     return result;
 
   } catch (error) {
+    console.error('Verification error:', error);
     return {
       valid: false,
       format: 'PAdES',
@@ -275,27 +329,45 @@ async function verifyPAdESSignature(pdfBuffer, fileName) {
 }
 
 function extractSignatureHex(pdfString, byteRange) {
-  const start = byteRange[0] + byteRange[1] + 1;
-  const end = byteRange[2] - 1;
-  
-  if (start >= end || end > pdfString.length) {
+  try {
+    // Find the Contents field which contains the signature
+    const contentsMatch = pdfString.match(/\/Contents\s*<([0-9A-Fa-f]+)>/);
+    if (contentsMatch) {
+      return contentsMatch[1];
+    }
+
+    // Alternative: extract from ByteRange positions
+    const start = byteRange[0] + byteRange[1];
+    const end = byteRange[2];
+    
+    if (start >= end || end > pdfString.length) {
+      return null;
+    }
+    
+    // Look for hex content between < and >
+    const section = pdfString.substring(start, end);
+    const hexMatch = section.match(/<([0-9A-Fa-f]+)>/);
+    
+    if (hexMatch) {
+      return hexMatch[1];
+    }
+    
+    return null;
+  } catch (e) {
+    console.error('Signature extraction error:', e);
     return null;
   }
-  
-  const hex = pdfString.substring(start, end);
-  
-  if (!/^[0-9A-Fa-f]+$/.test(hex)) {
-    return null;
-  }
-  
-  if (hex.length % 2 !== 0) {
-    return null;
-  }
-  
-  return hex;
 }
 
 function hexToBytes(hex) {
+  if (!hex || hex.length % 2 !== 0) {
+    throw new Error('Invalid hex string');
+  }
+  
+  if (!/^[0-9A-Fa-f]+$/.test(hex)) {
+    throw new Error('Invalid hex characters');
+  }
+  
   const bytes = [];
   for (let i = 0; i < hex.length; i += 2) {
     bytes.push(parseInt(hex.substr(i, 2), 16));
