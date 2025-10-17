@@ -52,6 +52,11 @@ async function handleFile(file) {
     showLoading();
 
     try {
+        // Check file size (6MB limit)
+        if (file.size > 6 * 1024 * 1024) {
+            throw new Error('File too large. Maximum size is 6MB.');
+        }
+
         const fileExtension = file.name.split('.').pop().toLowerCase();
         const arrayBuffer = await file.arrayBuffer();
         
@@ -109,7 +114,7 @@ async function handleFile(file) {
 
             if (!response.ok) {
                 const errorData = await response.json().catch(() => ({}));
-                throw new Error(errorData.message || 'Server verification failed: ' + response.statusText);
+                throw new Error(errorData.message || errorData.error || 'Server verification failed: ' + response.statusText);
             }
 
             verificationResult = await response.json();
@@ -134,9 +139,13 @@ async function handleFile(file) {
 function arrayBufferToBase64(buffer) {
     const bytes = new Uint8Array(buffer);
     let binary = '';
-    for (let i = 0; i < bytes.byteLength; i++) {
-        binary += String.fromCharCode(bytes[i]);
+    const chunkSize = 0x8000; // Process in chunks to avoid stack overflow
+    
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+        const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
+        binary += String.fromCharCode.apply(null, chunk);
     }
+    
     return btoa(binary);
 }
 
