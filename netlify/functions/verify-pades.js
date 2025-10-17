@@ -354,26 +354,26 @@ async function verifyPAdESSignature(pdfBuffer, fileName) {
 
 function extractSignatureHex(pdfString, byteRange) {
   try {
-    const contentsMatch = pdfString.match(/\/Contents\s*<([0-9A-Fa-f]+)>/);
-    if (contentsMatch) {
-      return contentsMatch[1];
-    }
-
-    const start = byteRange[0] + byteRange[1];
-    const end = byteRange[2];
-    
-    if (start >= end || end > pdfString.length) {
+    const contentsKeyword = '/Contents';
+    const contentsIndex = pdfString.indexOf(contentsKeyword);
+    if (contentsIndex === -1) {
       return null;
     }
-    
-    const section = pdfString.substring(start, end);
-    const hexMatch = section.match(/<([0-9A-Fa-f]+)>/);
-    
-    if (hexMatch) {
-      return hexMatch[1];
+
+    const startBracket = pdfString.indexOf('<', contentsIndex);
+    if (startBracket === -1) {
+      return null;
     }
-    
-    return null;
+
+    const endBracket = pdfString.indexOf('>', startBracket);
+    if (endBracket === -1) {
+      return null;
+    }
+
+    const hexString = pdfString.substring(startBracket + 1, endBracket);
+    // Remove any whitespace from the hex string
+    return hexString.replace(/\s/g, '');
+
   } catch (e) {
     console.error('Signature extraction error:', e);
     return null;
@@ -386,73 +386,4 @@ function hexToBytes(hex) {
   }
   
   if (!/^[0-9A-Fa-f]+$/.test(hex)) {
-    throw new Error('Invalid hex characters');
-  }
-  
-  const bytes = [];
-  for (let i = 0; i < hex.length; i += 2) {
-    bytes.push(parseInt(hex.substr(i, 2), 16));
-  }
-  return String.fromCharCode.apply(null, bytes);
-}
-
-function extractCertificateInfo(cert) {
-  const subject = cert.subject.attributes;
-  const issuer = cert.issuer.attributes;
-  
-  const info = {
-    commonName: 'Unknown',
-    organization: 'Unknown',
-    email: 'Unknown',
-    issuer: 'Unknown'
-  };
-
-  subject.forEach(attr => {
-    if (attr.shortName === 'CN') info.commonName = attr.value;
-    if (attr.shortName === 'O') info.organization = attr.value;
-    if (attr.shortName === 'emailAddress') info.email = attr.value;
-  });
-
-  issuer.forEach(attr => {
-    if (attr.shortName === 'CN') info.issuer = attr.value;
-  });
-
-  return info;
-}
-
-function isCertificateSelfSigned(cert) {
-  // Compare subject and issuer DN
-  const subjectDN = cert.subject.attributes.map(a => `${a.shortName}=${a.value}`).sort().join(',');
-  const issuerDN = cert.issuer.attributes.map(a => `${a.shortName}=${a.value}`).sort().join(',');
-  
-  return subjectDN === issuerDN;
-}
-
-function getHashAlgorithmFromDigestOid(p7) {
-  try {
-    const oidBuffer = p7.rawCapture.digestAlgorithm;
-    if (!oidBuffer) return 'sha256';
-    
-    const oidStr = forge.asn1.derToOid(oidBuffer);
-    
-    if (oidStr === forge.pki.oids.sha1 || oidStr.includes('1.3.14.3.2.26')) {
-      return 'sha1';
-    } else if (oidStr === forge.pki.oids.sha256 || oidStr.includes('2.16.840.1.101.3.4.2.1')) {
-      return 'sha256';
-    } else if (oidStr === forge.pki.oids.sha384 || oidStr.includes('2.16.840.1.101.3.4.2.2')) {
-      return 'sha384';
-    } else if (oidStr === forge.pki.oids.sha512 || oidStr.includes('2.16.840.1.101.3.4.2.3')) {
-      return 'sha512';
-    }
-    
-    return 'sha256';
-  } catch (e) {
-    return 'sha256';
-  }
-}
-
-function getSignatureAlgorithm(p7) {
-  const hashAlg = getHashAlgorithmFromDigestOid(p7);
-  const hashName = hashAlg.toUpperCase();
-  return `RSA-${hashName}`;
-}
+    throw n
