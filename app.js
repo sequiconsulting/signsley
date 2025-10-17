@@ -88,23 +88,38 @@ async function handleFile(file) {
                 }
         }
 
-        // Call serverless function
-        const response = await fetch(endpoint, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                fileData: base64Data,
-                fileName: file.name
-            })
-        });
+        // Call serverless function with timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
 
-        if (!response.ok) {
-            throw new Error('Server verification failed: ' + response.statusText);
+        try {
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    fileData: base64Data,
+                    fileName: file.name
+                }),
+                signal: controller.signal
+            });
+
+            clearTimeout(timeoutId);
+
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.message || 'Server verification failed: ' + response.statusText);
+            }
+
+            verificationResult = await response.json();
+        } catch (fetchError) {
+            clearTimeout(timeoutId);
+            if (fetchError.name === 'AbortError') {
+                throw new Error('Request timeout - file may be too large or server is busy');
+            }
+            throw fetchError;
         }
-
-        verificationResult = await response.json();
 
         hideLoading();
         displayResults(verificationResult);
@@ -133,7 +148,7 @@ function displayResults(result) {
     } else {
         resultIcon.textContent = '✗';
         resultIcon.className = 'result-icon invalid';
-        resultTitle.textContent = 'Invalid or No Signature';
+        resultTitle.textContent = result.structureValid ? 'Structure Valid (Signature Not Verified)' : 'Invalid or No Signature';
     }
     
     let detailsHTML = '';
@@ -158,23 +173,39 @@ function displayResults(result) {
         </div>
     `;
     
-    if (result.cryptographicVerification) {
+    if (result.cryptographicVerification !== undefined) {
+        const verificationStatus = result.cryptographicVerification 
+            ? '✓ Full Cryptographic Verification' 
+            : '⚠️ Structure Validation Only';
+        const statusColor = result.cryptographicVerification ? '#2c5f2d' : '#f57c00';
+        
         detailsHTML += `
             <div class="detail-row">
                 <div class="detail-label">Verification Type:</div>
-                <div class="detail-value" style="color: #2c5f2d; font-weight: 500;">
-                    ✓ Full Cryptographic Verification
+                <div class="detail-value" style="color: ${statusColor}; font-weight: 500;">
+                    ${verificationStatus}
                 </div>
             </div>
         `;
     }
 
-    if (result.signatureValid !== undefined) {
+    if (result.signatureValid !== undefined && result.signatureValid !== null) {
         detailsHTML += `
             <div class="detail-row">
                 <div class="detail-label">Signature Status:</div>
                 <div class="detail-value" style="color: ${result.signatureValid ? '#2c5f2d' : '#c62828'}">
                     ${result.signatureValid ? '✓ Valid' : '✗ Invalid'}
+                </div>
+            </div>
+        `;
+    }
+
+    if (result.structureValid !== undefined) {
+        detailsHTML += `
+            <div class="detail-row">
+                <div class="detail-label">Structure Status:</div>
+                <div class="detail-value" style="color: ${result.structureValid ? '#2c5f2d' : '#c62828'}">
+                    ${result.structureValid ? '✓ Valid' : '✗ Invalid'}
                 </div>
             </div>
         `;
@@ -315,6 +346,7 @@ function displayResults(result) {
 }
 
 function escapeHtml(text) {
+    if (!text) return '';
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;

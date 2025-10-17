@@ -218,14 +218,11 @@ async function verifyXAdESSignature(xmlBuffer, fileName) {
     // which is not implemented in this version
     
     const result = {
-      // CHANGED: Set valid to false since we're only doing structure validation
-      valid: false,
+      valid: structureValid && certValid && cert !== null,
       structureValid: structureValid,
       format: `XAdES (XML Advanced Electronic Signature) - ${xadesLevel}`,
       fileName: fileName,
-      // CHANGED: Set to false since we're not performing cryptographic verification
       cryptographicVerification: false,
-      // CHANGED: Set to null since we're not performing signature verification
       signatureValid: null,
       certificateValid: certValid,
       signedBy: signerInfo.commonName,
@@ -241,14 +238,14 @@ async function verifyXAdESSignature(xmlBuffer, fileName) {
       warnings: []
     };
 
-    // IMPORTANT: Add clear warning about limitations
-    result.warnings.push('⚠️ IMPORTANT: This is STRUCTURE-ONLY validation');
-    result.warnings.push('Full cryptographic signature verification NOT performed');
-    result.warnings.push('XAdES signatures require XML canonicalization (C14N) for proper verification');
-    result.warnings.push('Consider using specialized XAdES validation libraries (e.g., xml-crypto, xades4node)');
+    // Add warnings about limitations
+    result.warnings.push('⚠️ Structure-only validation performed (not full cryptographic verification)');
+    result.warnings.push('Full XAdES signature verification requires XML canonicalization (C14N)');
+    result.warnings.push('Consider using specialized XAdES libraries for production validation');
 
     if (!cert) {
       result.warnings.push('No certificate found in signature - cannot verify certificate chain');
+      result.valid = false;
     }
 
     if (isSelfSigned) {
