@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Digital Signature Verifier</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsrsasign/10.9.0/jsrsasign-all-min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        function App() {
+            const [file, setFile] = useState(null);
+            const [verificationResult, setVerificationResult] = useState(null);
+            const [isVerifying, setIsVerifying] = useState(false);
+            const [dragActive, setDragActive] = useState(false);
+            const [signatureType, setSignatureType] = useState(null);
+
+            const supportedFormats = [
+                { name: 'PAdES', description: 'PDF Advanced Electronic Signatures', extensions: ['.pdf'] },
+                { name: 'CAdES', description: 'CMS Advanced Electronic Signatures', extensions: ['.p7m', '.p7s'] },
+                { name: 'XAdES', description: 'XML Advanced Electronic Signatures', extensions: ['.xml'] },
+                { name: 'JAdES', description: 'JSON Advanced Electronic Signatures', extensions: ['.json'] },
+                { name: 'PKCS#7', description: 'Cryptographic Message Syntax', extensions: ['.p7b', '.p7c'] }
+            ];
+
+            const handleDrag = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (e.type === "dragenter" || e.type === "dragover") {
+                    setDragActive(true);
+                } else if (e.type === "dragleave") {
+                    setDragActive(false);
+                }
+            };
+
+            const handleDrop = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setDragActive(false);
+                if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                    handleFileChange({ target: { files: e.dataTransfer.files } });
+                }
+            };
+
+            const handleFileChange = (e) => {
+                const selectedFile = e.target.files[0];
+                if (selectedFile) {
+                    setFile(selectedFile);
+                    setVerificationResult(null);
+                }
+            };
+
+            const detectSignatureType = (fileName, fileContent) => {
+                const extension = fileName.toLowerCase().split('.').pop();
+                
+                if (extension === 'pdf') return 'PAdES';
+                if (extension === 'p7m' || extension === 'p7s') return 'CAdES';
+                if (extension === 'xml') return 'XAdES';
+                if (extension === 'json') return 'JAdES';
+                if (extension === 'p7b' || extension === 'p7c') return 'PKCS#7';
+                
+                // Try to detect from content
+                if (fileContent.startsWith('%PDF')) return 'PAdES';
+                if (fileContent.includes('<?xml')) return 'XAdES';
+                if (fileContent.trim().startsWith('{')) return 'JAdES';
+                
+                return 'Unknown';
+            };
+
+            const verifyPAdESSignature = async (arrayBuffer) => {
+                try {
+                    const uint8Array = new Uint8Array(arrayBuffer);
+                    const pdfString = new TextDecoder('latin1').decode(uint8Array);
+                    
+                    // Look for ByteRange in PDF
+                    const byteRangeMatch = pdfString.match(/\/ByteRange\s*\[\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*\]/);
+                    
+                    if (!byteRangeMatch) {
+                        return {
+                            valid: false,
+                            message: 'No digital signature found in PDF',

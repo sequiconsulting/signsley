@@ -1,0 +1,166 @@
+╔══════════════════════════════════════════════════════════════════════╗
+║                    SIGNSLEY ARCHITECTURE DIAGRAM                      ║
+╚══════════════════════════════════════════════════════════════════════╝
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                           USER BROWSER                               │
+│                                                                      │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │                     Frontend (Client)                         │  │
+│  │  • index.html - UI (Greensley-styled)                        │  │
+│  │  • app.js - File handling & display                          │  │
+│  │  • Drag & drop interface                                     │  │
+│  └──────────────────────────────────────────────────────────────┘  │
+│                              ↓ ↑                                     │
+│                     File Upload (Base64)                             │
+│                     Results (JSON)                                   │
+└─────────────────────────────────────────────────────────────────────┘
+                              ↓ ↑
+                         HTTPS/TLS
+                              ↓ ↑
+┌─────────────────────────────────────────────────────────────────────┐
+│                         NETLIFY PLATFORM                             │
+│                                                                      │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │                      Static Assets                            │  │
+│  │  • HTML, CSS, JavaScript                                     │  │
+│  │  • Served via Global CDN                                     │  │
+│  │  • HTTPS enforced                                            │  │
+│  └──────────────────────────────────────────────────────────────┘  │
+│                              │                                       │
+│                              ↓                                       │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │                 API Gateway / Router                          │  │
+│  │  • /.netlify/functions/verify-pades                          │  │
+│  │  • /.netlify/functions/verify-cades                          │  │
+│  │  • /.netlify/functions/verify-xades                          │  │
+│  └──────────────────────────────────────────────────────────────┘  │
+│                              │                                       │
+│                    ┌─────────┴─────────┐                            │
+│                    ↓                   ↓                             │
+│  ┌──────────────────────────┐  ┌──────────────────────────┐        │
+│  │  Netlify Function        │  │  Netlify Function        │        │
+│  │  (AWS Lambda)            │  │  (AWS Lambda)            │   ...  │
+│  │                          │  │                          │        │
+│  │  verify-pades.js         │  │  verify-cades.js         │        │
+│  │  ┌────────────────────┐  │  │  ┌────────────────────┐  │        │
+│  │  │ • Parse PDF        │  │  │  │ • Parse PKCS#7     │  │        │
+│  │  │ • Extract ByteRange│  │  │  │ • Parse ASN.1      │  │        │
+│  │  │ • Extract signature│  │  │  │ • Extract cert     │  │        │
+│  │  │ • Parse PKCS#7     │  │  │  │ • Verify signature │  │        │
+│  │  │ • Verify crypto    │  │  │  │ • Check validity   │  │        │
+│  │  │ • Check cert dates │  │  │  │ • Return results   │  │        │
+│  │  └────────────────────┘  │  │  └────────────────────┘  │        │
+│  │                          │  │                          │        │
+│  │  Node.js 18+             │  │  Node.js 18+             │        │
+│  │  node-forge              │  │  node-forge              │        │
+│  │  @signpdf/signpdf        │  │  Memory: 1024MB          │        │
+│  │  Memory: 1024MB          │  │  Timeout: 10s            │        │
+│  │  Timeout: 10s            │  │                          │        │
+│  └──────────────────────────┘  └──────────────────────────┘        │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════════════
+
+DATA FLOW:
+
+1. USER ACTION
+   └─> Uploads file (PDF/XML/P7M) via drag-and-drop or file picker
+
+2. CLIENT PROCESSING
+   └─> Converts file to Base64
+   └─> Determines signature type
+   └─> Sends to appropriate endpoint
+
+3. NETLIFY ROUTING
+   └─> /.netlify/functions/verify-[type]
+   └─> Routes to correct serverless function
+
+4. SERVERLESS FUNCTION EXECUTION
+   └─> Receives Base64 file data
+   └─> Decodes to buffer
+   └─> Parses signature structure
+   └─> Extracts certificate
+   └─> Performs cryptographic verification:
+       • Hash calculation
+       • Signature validation
+       • Certificate parsing
+       • Date validation
+       • Self-signed detection
+   └─> Returns JSON result
+
+5. RESULT DISPLAY
+   └─> Frontend receives JSON
+   └─> Displays:
+       • Signature validity ✓ or ✗
+       • Certificate details
+       • Signer information
+       • Warnings (if any)
+
+═══════════════════════════════════════════════════════════════════════
+
+SIGNATURE FORMAT ROUTING:
+
+┌──────────────┐
+│  File Upload │
+└──────┬───────┘
+       │
+       ├─> .pdf ──────────> verify-pades.js
+       │                     • ByteRange extraction
+       │                     • PKCS#7 parsing
+       │                     • PDF signature validation
+       │
+       ├─> .xml ──────────> verify-xades.js
+       │                     • XML parsing (xmldom)
+       │                     • XPath queries
+       │                     • X509 certificate extraction
+       │                     • Signature validation
+       │
+       └─> .p7m/.p7s/.sig > verify-cades.js
+                             • ASN.1 DER parsing
+                             • PKCS#7 structure
+                             • Certificate chain
+                             • Signature verification
+
+═══════════════════════════════════════════════════════════════════════
+
+SECURITY LAYERS:
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ Layer 1: HTTPS/TLS Encryption                                       │
+│          └─> All data encrypted in transit                          │
+├─────────────────────────────────────────────────────────────────────┤
+│ Layer 2: Content Security Policy                                    │
+│          └─> XSS protection, frame options, etc.                    │
+├─────────────────────────────────────────────────────────────────────┤
+│ Layer 3: Stateless Processing                                       │
+│          └─> No data persistence, memory-only operations            │
+├─────────────────────────────────────────────────────────────────────┤
+│ Layer 4: Isolated Function Execution                                │
+│          └─> Each request in separate container                     │
+├─────────────────────────────────────────────────────────────────────┤
+│ Layer 5: Cryptographic Verification                                 │
+│          └─> Real signature validation, not just metadata           │
+└─────────────────────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════════════
+
+DEPLOYMENT PROCESS:
+
+Local Development:
+┌─────────────┐      ┌──────────────┐      ┌────────────────┐
+│ npm install │  ->  │ npm run dev  │  ->  │ Test at :8888  │
+└─────────────┘      └──────────────┘      └────────────────┘
+
+Production Deployment:
+┌─────────────────┐      ┌─────────────────┐      ┌──────────────┐
+│ netlify login   │  ->  │ netlify deploy  │  ->  │ Live on HTTPS│
+└─────────────────┘      └─────────────────┘      └──────────────┘
+
+Git-based Deployment:
+┌──────────────┐      ┌─────────────┐      ┌──────────────────┐
+│ git push     │  ->  │ Auto build  │  ->  │ Auto deploy      │
+└──────────────┘      └─────────────┘      └──────────────────┘
+
+═══════════════════════════════════════════════════════════════════════
