@@ -10,7 +10,6 @@ const resultTitle = document.getElementById('resultTitle');
 const resultDetails = document.getElementById('resultDetails');
 const errorMessage = document.getElementById('errorMessage');
 
-// Drag and drop handlers
 uploadSection.addEventListener('dragover', (e) => {
     e.preventDefault();
     uploadSection.classList.add('dragover');
@@ -30,7 +29,6 @@ uploadSection.addEventListener('drop', (e) => {
     }
 });
 
-// Click to upload
 uploadSection.addEventListener('click', () => {
     fileInput.click();
 });
@@ -52,7 +50,6 @@ async function handleFile(file) {
     showLoading();
 
     try {
-        // Check file size (6MB limit)
         if (file.size > 6 * 1024 * 1024) {
             throw new Error('File too large. Maximum size is 6MB.');
         }
@@ -60,13 +57,10 @@ async function handleFile(file) {
         const fileExtension = file.name.split('.').pop().toLowerCase();
         const arrayBuffer = await file.arrayBuffer();
         
-        // Convert to base64 for transmission
         const base64Data = arrayBufferToBase64(arrayBuffer);
 
-        let verificationResult;
         let endpoint;
 
-        // Determine which endpoint to use
         switch (fileExtension) {
             case 'pdf':
                 endpoint = '/.netlify/functions/verify-pades';
@@ -80,7 +74,6 @@ async function handleFile(file) {
                 endpoint = '/.netlify/functions/verify-cades';
                 break;
             default:
-                // Try to detect format
                 const uint8Array = new Uint8Array(arrayBuffer);
                 const dataString = new TextDecoder().decode(uint8Array.slice(0, 1000));
                 
@@ -93,9 +86,8 @@ async function handleFile(file) {
                 }
         }
 
-        // Call serverless function with timeout
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+        const timeoutId = setTimeout(() => controller.abort(), 30000);
 
         try {
             const response = await fetch(endpoint, {
@@ -117,7 +109,10 @@ async function handleFile(file) {
                 throw new Error(errorData.message || errorData.error || 'Server verification failed: ' + response.statusText);
             }
 
-            verificationResult = await response.json();
+            const verificationResult = await response.json();
+            hideLoading();
+            displayResults(verificationResult);
+
         } catch (fetchError) {
             clearTimeout(timeoutId);
             if (fetchError.name === 'AbortError') {
@@ -125,9 +120,6 @@ async function handleFile(file) {
             }
             throw fetchError;
         }
-
-        hideLoading();
-        displayResults(verificationResult);
 
     } catch (error) {
         console.error('Verification error:', error);
@@ -139,7 +131,7 @@ async function handleFile(file) {
 function arrayBufferToBase64(buffer) {
     const bytes = new Uint8Array(buffer);
     let binary = '';
-    const chunkSize = 0x8000; // Process in chunks to avoid stack overflow
+    const chunkSize = 0x8000;
     
     for (let i = 0; i < bytes.length; i += chunkSize) {
         const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
@@ -317,6 +309,15 @@ function displayResults(result) {
             <div class="detail-row">
                 <div class="detail-label">Serial Number:</div>
                 <div class="detail-value">${escapeHtml(result.serialNumber)}</div>
+            </div>
+        `;
+    }
+
+    if (result.certificateChainLength !== undefined) {
+        detailsHTML += `
+            <div class="detail-row">
+                <div class="detail-label">Certificate Chain:</div>
+                <div class="detail-value">${result.certificateChainLength} certificate(s)</div>
             </div>
         `;
     }

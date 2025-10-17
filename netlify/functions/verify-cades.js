@@ -136,9 +136,16 @@ async function verifyCAdESSignature(dataBuffer, fileName) {
         
         const signature = p7.rawCapture.signature;
         const publicKey = signerCert.publicKey;
-        signatureValid = publicKey.verify(md.digest().bytes(), signature);
         
-        if (!isDetached && p7.rawCapture.content) {
+        try {
+          signatureValid = publicKey.verify(md.digest().bytes(), signature);
+        } catch (verifyErr) {
+          console.error('Signature verification failed:', verifyErr);
+          verificationError = 'Signature verification failed';
+          signatureValid = false;
+        }
+        
+        if (signatureValid && !isDetached && p7.rawCapture.content) {
           let contentDigestValid = false;
           const contentMd = forge.md[hashAlgorithm].create();
           contentMd.update(p7.rawCapture.content);
@@ -170,7 +177,13 @@ async function verifyCAdESSignature(dataBuffer, fileName) {
           md.update(p7.rawCapture.content);
           
           const signature = p7.rawCapture.signature;
-          signatureValid = signerCert.publicKey.verify(md.digest().bytes(), signature);
+          try {
+            signatureValid = signerCert.publicKey.verify(md.digest().bytes(), signature);
+          } catch (verifyErr) {
+            console.error('Signature verification failed:', verifyErr);
+            verificationError = 'Signature verification failed';
+            signatureValid = false;
+          }
         } else {
           verificationError = 'Detached signature requires original content';
           signatureValid = false;
@@ -186,7 +199,8 @@ async function verifyCAdESSignature(dataBuffer, fileName) {
     const certValid = now >= signerCert.validity.notBefore && 
                      now <= signerCert.validity.notAfter;
 
-    const isSelfSigned = signerCert.issuer.hash === signerCert.subject.hash;
+    const isSelfSigned = isCertificateSelfSigned(signerCert);
+    const hasChain = p7.certificates.length > 1;
 
     let signatureDate = 'Unknown';
     try {
@@ -228,6 +242,7 @@ async function verifyCAdESSignature(dataBuffer, fileName) {
       certificateValidTo: signerCert.validity.notAfter.toLocaleDateString(),
       serialNumber: signerCert.serialNumber,
       isSelfSigned: isSelfSigned,
+      certificateChainLength: p7.certificates.length,
       warnings: []
     };
 
@@ -238,8 +253,10 @@ async function verifyCAdESSignature(dataBuffer, fileName) {
       }
     }
 
-    if (isSelfSigned) {
-      result.warnings.push('Certificate is self-signed');
+    if (isSelfSigned && !hasChain) {
+      result.warnings.push('Certificate is self-signed with no chain');
+    } else if (hasChain) {
+      result.warnings.push(`Certificate chain contains ${p7.certificates.length} certificates`);
     }
     
     if (!certValid) {
@@ -250,7 +267,8 @@ async function verifyCAdESSignature(dataBuffer, fileName) {
       result.warnings.push('Verification issue: ' + verificationError);
     }
 
-    result.warnings.push('CRL/OCSP not checked');
+    result.warnings.push('CRL/OCSP revocation status not checked');
+    result.warnings.push('Full certificate chain validation not performed');
 
     return result;
 
@@ -286,6 +304,13 @@ function extractCertificateInfo(cert) {
   });
 
   return info;
+}
+
+function isCertificateSelfSigned(cert) {
+  const subjectDN = cert.subject.attributes.map(a => `${a.shortName}=${a.value}`).sort().join(',');
+  const issuerDN = cert.issuer.attributes.map(a => `${a.shortName}=${a.value}`).sort().join(',');
+  
+  return subjectDN === issuerDN;
 }
 
 function getHashAlgorithmFromDigestOid(p7) {

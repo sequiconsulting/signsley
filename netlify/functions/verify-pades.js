@@ -76,53 +76,10 @@ exports.handler = async (event, context) => {
   }
 };
 
-function getASN1Length(bytes, offset) {
-  // Read ASN.1 length field
-  const firstByte = bytes.charCodeAt(offset);
-  
-  if ((firstByte & 0x80) === 0) {
-    // Short form: length is in the first byte
-    return { length: firstByte, headerLength: 1 };
-  } else {
-    // Long form: first byte tells us how many following bytes contain the length
-    const numLengthBytes = firstByte & 0x7F;
-    let length = 0;
-    
-    for (let i = 0; i < numLengthBytes; i++) {
-      length = (length << 8) | bytes.charCodeAt(offset + 1 + i);
-    }
-    
-    return { length: length, headerLength: 1 + numLengthBytes };
-  }
-}
-
-function extractPKCS7Only(signatureBytes) {
-  // Parse the top-level SEQUENCE to get exact length
-  // ASN.1 structure: TAG (1 byte) + LENGTH (1+ bytes) + VALUE
-  
-  if (signatureBytes.length < 2) {
-    throw new Error('Signature too short');
-  }
-  
-  const tag = signatureBytes.charCodeAt(0);
-  
-  // Should be SEQUENCE (0x30)
-  if (tag !== 0x30) {
-    throw new Error('Invalid ASN.1 tag, expected SEQUENCE');
-  }
-  
-  const lengthInfo = getASN1Length(signatureBytes, 1);
-  const totalLength = 1 + lengthInfo.headerLength + lengthInfo.length;
-  
-  // Return only the PKCS#7 portion (no trailing data)
-  return signatureBytes.substring(0, totalLength);
-}
-
 async function verifyPAdESSignature(pdfBuffer, fileName) {
   try {
     const pdfString = pdfBuffer.toString('latin1');
     
-    // Check if it's a valid PDF
     if (!pdfString.startsWith('%PDF-')) {
       return {
         valid: false,
@@ -132,7 +89,6 @@ async function verifyPAdESSignature(pdfBuffer, fileName) {
       };
     }
 
-    // Find ByteRange
     const byteRangeMatch = pdfString.match(/\/ByteRange\s*\[\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*\]/);
     if (!byteRangeMatch) {
       return {
@@ -150,7 +106,6 @@ async function verifyPAdESSignature(pdfBuffer, fileName) {
       parseInt(byteRangeMatch[4])
     ];
 
-    // Validate ByteRange values
     if (byteRange[0] < 0 || byteRange[1] <= 0 || byteRange[2] <= 0 || byteRange[3] <= 0) {
       return {
         valid: false,
@@ -160,7 +115,6 @@ async function verifyPAdESSignature(pdfBuffer, fileName) {
       };
     }
 
-    // Extract signature hex
     const signatureHex = extractSignatureHex(pdfString, byteRange);
     if (!signatureHex) {
       return {
@@ -171,7 +125,6 @@ async function verifyPAdESSignature(pdfBuffer, fileName) {
       };
     }
 
-    // Convert hex to bytes
     let signatureBytes;
     try {
       signatureBytes = hexToBytes(signatureHex);
@@ -184,19 +137,9 @@ async function verifyPAdESSignature(pdfBuffer, fileName) {
       };
     }
 
-    // Extract only the PKCS#7 structure (remove trailing data)
-    let pkcs7Bytes;
-    try {
-      pkcs7Bytes = extractPKCS7Only(signatureBytes);
-    } catch (e) {
-      console.error('PKCS#7 extraction error:', e);
-      pkcs7Bytes = signatureBytes; // Try with full data if extraction fails
-    }
-
-    // Parse PKCS#7
     let p7;
     try {
-      const der = forge.util.createBuffer(pkcs7Bytes, 'raw');
+      const der = forge.util.createBuffer(signatureBytes, 'raw');
       const asn1 = forge.asn1.fromDer(der);
       p7 = forge.pkcs7.messageFromAsn1(asn1);
     } catch (e) {
@@ -209,7 +152,6 @@ async function verifyPAdESSignature(pdfBuffer, fileName) {
       };
     }
 
-    // Verify it's a signed data structure
     if (!p7.rawCapture || !p7.rawCapture.signature) {
       return {
         valid: false,
@@ -231,7 +173,6 @@ async function verifyPAdESSignature(pdfBuffer, fileName) {
     const signerCert = p7.certificates[0];
     const signerInfo = extractCertificateInfo(signerCert);
 
-    // Get the signed data (ByteRange portions)
     const signedData = Buffer.concat([
       pdfBuffer.slice(byteRange[0], byteRange[0] + byteRange[1]),
       pdfBuffer.slice(byteRange[2], byteRange[2] + byteRange[3])
@@ -245,7 +186,6 @@ async function verifyPAdESSignature(pdfBuffer, fileName) {
       const attrs = p7.rawCapture.authenticatedAttributes;
       
       if (attrs) {
-        // Verify signature on authenticated attributes
         const set = forge.asn1.create(
           forge.asn1.Class.UNIVERSAL,
           forge.asn1.Type.SET,
@@ -259,40 +199,53 @@ async function verifyPAdESSignature(pdfBuffer, fileName) {
         
         const signature = p7.rawCapture.signature;
         const publicKey = signerCert.publicKey;
-        signatureValid = publicKey.verify(md.digest().bytes(), signature);
         
-        // Verify message digest in authenticated attributes matches content
-        let contentDigestValid = false;
-        const contentMd = forge.md[hashAlgorithm].create();
-        contentMd.update(signedData.toString('binary'));
-        const contentDigest = contentMd.digest().bytes();
+        try {
+          signatureValid = publicKey.verify(md.digest().bytes(), signature);
+        } catch (verifyErr) {
+          console.error('Signature verification failed:', verifyErr);
+          verificationError = 'Signature verification failed';
+          signatureValid = false;
+        }
         
-        for (let attr of attrs) {
-          try {
-            const attrOid = forge.asn1.derToOid(attr.value[0].value);
-            if (attrOid === forge.pki.oids.messageDigest) {
-              const attrDigest = attr.value[1].value[0].value;
-              contentDigestValid = (attrDigest === contentDigest);
-              break;
+        if (signatureValid) {
+          let contentDigestValid = false;
+          const contentMd = forge.md[hashAlgorithm].create();
+          contentMd.update(signedData.toString('binary'));
+          const contentDigest = contentMd.digest().bytes();
+          
+          for (let attr of attrs) {
+            try {
+              const attrOid = forge.asn1.derToOid(attr.value[0].value);
+              if (attrOid === forge.pki.oids.messageDigest) {
+                const attrDigest = attr.value[1].value[0].value;
+                contentDigestValid = (attrDigest === contentDigest);
+                break;
+              }
+            } catch (e) {
+              continue;
             }
-          } catch (e) {
-            continue;
+          }
+          
+          signatureValid = signatureValid && contentDigestValid;
+          
+          if (!contentDigestValid) {
+            verificationError = 'Content digest mismatch - document may have been modified';
           }
         }
         
-        signatureValid = signatureValid && contentDigestValid;
-        
-        if (!contentDigestValid) {
-          verificationError = 'Content digest mismatch - document may have been modified';
-        }
-        
       } else {
-        // No authenticated attributes - verify signature directly on content
         const md = forge.md[hashAlgorithm].create();
         md.update(signedData.toString('binary'));
         
         const signature = p7.rawCapture.signature;
-        signatureValid = signerCert.publicKey.verify(md.digest().bytes(), signature);
+        try {
+          signatureValid = signerCert.publicKey.verify(md.digest().bytes(), signature);
+        } catch (verifyErr) {
+          console.error('Signature verification failed:', verifyErr);
+          verificationError = 'Signature verification failed';
+          signatureValid = false;
+        }
       }
       
     } catch (e) {
@@ -301,14 +254,13 @@ async function verifyPAdESSignature(pdfBuffer, fileName) {
       signatureValid = false;
     }
 
-    // Check certificate validity
     const now = new Date();
     const certValid = now >= signerCert.validity.notBefore && 
                      now <= signerCert.validity.notAfter;
 
-    const isSelfSigned = signerCert.issuer.hash === signerCert.subject.hash;
+    const isSelfSigned = isCertificateSelfSigned(signerCert);
+    const hasChain = p7.certificates.length > 1;
 
-    // Extract signing time
     let signatureDate = 'Unknown';
     try {
       const attrs = p7.rawCapture.authenticatedAttributes;
@@ -349,11 +301,14 @@ async function verifyPAdESSignature(pdfBuffer, fileName) {
       certificateValidTo: signerCert.validity.notAfter.toLocaleDateString(),
       serialNumber: signerCert.serialNumber,
       isSelfSigned: isSelfSigned,
+      certificateChainLength: p7.certificates.length,
       warnings: []
     };
 
-    if (isSelfSigned) {
-      result.warnings.push('Certificate is self-signed');
+    if (isSelfSigned && !hasChain) {
+      result.warnings.push('Certificate is self-signed with no chain');
+    } else if (hasChain) {
+      result.warnings.push(`Certificate chain contains ${p7.certificates.length} certificates`);
     }
     
     if (!certValid) {
@@ -365,6 +320,7 @@ async function verifyPAdESSignature(pdfBuffer, fileName) {
     }
 
     result.warnings.push('CRL/OCSP revocation status not checked');
+    result.warnings.push('Full certificate chain validation not performed');
 
     return result;
 
@@ -381,13 +337,11 @@ async function verifyPAdESSignature(pdfBuffer, fileName) {
 
 function extractSignatureHex(pdfString, byteRange) {
   try {
-    // Find the Contents field which contains the signature
     const contentsMatch = pdfString.match(/\/Contents\s*<([0-9A-Fa-f]+)>/);
     if (contentsMatch) {
       return contentsMatch[1];
     }
 
-    // Alternative: extract from ByteRange positions
     const start = byteRange[0] + byteRange[1];
     const end = byteRange[2];
     
@@ -395,7 +349,6 @@ function extractSignatureHex(pdfString, byteRange) {
       return null;
     }
     
-    // Look for hex content between < and >
     const section = pdfString.substring(start, end);
     const hexMatch = section.match(/<([0-9A-Fa-f]+)>/);
     
@@ -448,6 +401,14 @@ function extractCertificateInfo(cert) {
   });
 
   return info;
+}
+
+function isCertificateSelfSigned(cert) {
+  // Compare subject and issuer DN
+  const subjectDN = cert.subject.attributes.map(a => `${a.shortName}=${a.value}`).sort().join(',');
+  const issuerDN = cert.issuer.attributes.map(a => `${a.shortName}=${a.value}`).sort().join(',');
+  
+  return subjectDN === issuerDN;
 }
 
 function getHashAlgorithmFromDigestOid(p7) {
