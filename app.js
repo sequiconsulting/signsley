@@ -1,4 +1,4 @@
-// Signsley Digital Signature Verification App - Enhanced Version
+// Signsley Digital Signature Verification App - Enhanced Version v8
 
 // DOM Elements
 const uploadSection = document.getElementById('uploadSection');
@@ -16,10 +16,11 @@ document.addEventListener('DOMContentLoaded', () => {
     try { hideLoading(); hideError(); } catch (e) {}
 });
 
-// Configuration
+// Enhanced Configuration
 const CONFIG = {
     MAX_FILE_SIZE: 6 * 1024 * 1024, // 6MB
-    REQUEST_TIMEOUT: 30000, // 30 seconds
+    REQUEST_TIMEOUT: 45000, // Increased to 45 seconds for complex files
+    PROGRESS_UPDATE_INTERVAL: 3000, // Update progress every 3 seconds
     SUPPORTED_EXTENSIONS: ['pdf', 'xml', 'p7m', 'p7s', 'sig'],
     SUPPORTED_MIME_TYPES: [
         'application/pdf',
@@ -64,15 +65,21 @@ function validateFile(file) {
     return true;
 }
 
-// Enhanced error categorization
+// Enhanced error categorization with timeout handling
 function categorizeError(error) {
     const message = error.message || error.toString();
     
-    if (message.includes('timeout') || message.includes('Request timeout')) {
+    if (message.includes('timeout') || message.includes('Request timeout') || message.includes('Processing timeout')) {
         return {
             title: 'Processing Timeout',
-            message: 'The file is taking too long to process. This may happen with large or complex files. Please try again or contact support if the problem persists.',
-            type: 'warning'
+            message: 'The file is taking too long to process. This commonly happens with Purchase Order files containing large attachments. Please try again, or use Adobe Acrobat for complex signatures.',
+            type: 'warning',
+            suggestions: [
+                'Try saving the PDF without embedded attachments',
+                'Use Adobe Acrobat Reader for verification',
+                'Contact support if this is a critical business document',
+                'Consider using a different signature verification tool'
+            ]
         };
     }
     
@@ -113,6 +120,20 @@ function categorizeError(error) {
             title: 'Server Error',
             message: 'The verification service encountered an error. Please try again in a few minutes.',
             type: 'error'
+        };
+    }
+    
+    if (message.includes('signature structure') || message.includes('extraction')) {
+        return {
+            title: 'Complex Signature Detected',
+            message: 'This file contains a complex signature that requires specialized processing. This often occurs with Purchase Order files containing embedded attachments.',
+            type: 'warning',
+            suggestions: [
+                'The file likely contains valid signatures but in a complex format',
+                'Try using Adobe Acrobat for full verification',
+                'Consider saving the PDF without attachments and try again',
+                'Contact the document sender for a simpler version'
+            ]
         };
     }
     
@@ -197,7 +218,7 @@ fileInput.addEventListener('change', (e) => {
     }
 });
 
-// Enhanced file handling with progress tracking
+// Enhanced file handling with progressive loading messages
 async function handleFile(file) {
     hideError();
     hideResults();
@@ -224,10 +245,19 @@ async function handleFile(file) {
         // Determine endpoint based on file analysis
         const endpoint = determineEndpoint(file, arrayBuffer);
         
-        showLoading('Verifying signature...');
+        // Check if this is a potentially problematic file
+        const isPotentiallyComplex = file.name.toLowerCase().includes('purchase order') || 
+                                   file.name.toLowerCase().includes('attach') || 
+                                   file.size > 1024 * 1024;
         
-        // Send request with timeout
-        const result = await sendVerificationRequest(endpoint, base64Data, file.name);
+        if (isPotentiallyComplex) {
+            showLoading('Processing complex signature (this may take up to 45 seconds)...');
+        } else {
+            showLoading('Verifying signature...');
+        }
+        
+        // Send request with enhanced timeout and progress updates
+        const result = await sendVerificationRequestWithProgress(endpoint, base64Data, file.name, isPotentiallyComplex);
         
         hideLoading();
         displayResults(result);
@@ -237,7 +267,7 @@ async function handleFile(file) {
         hideLoading();
         
         const categorizedError = categorizeError(error);
-        showError(categorizedError.message, categorizedError.type);
+        showEnhancedError(categorizedError);
         
     } finally {
         // Cleanup memory
@@ -331,12 +361,33 @@ function determineEndpoint(file, arrayBuffer) {
     }
 }
 
-// Enhanced verification request with proper timeout handling
-async function sendVerificationRequest(endpoint, base64Data, fileName) {
+// Enhanced verification request with progress updates
+async function sendVerificationRequestWithProgress(endpoint, base64Data, fileName, isComplex = false) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {
         controller.abort();
     }, CONFIG.REQUEST_TIMEOUT);
+
+    // Setup progress updates for complex files
+    let progressUpdateId = null;
+    if (isComplex) {
+        let progressStep = 0;
+        const progressMessages = [
+            'Analyzing signature structure...',
+            'Extracting certificate information...',
+            'Parsing complex signature data...',
+            'Validating certificate chain...',
+            'Performing final verification...',
+            'Almost complete...'
+        ];
+        
+        progressUpdateId = setInterval(() => {
+            if (progressStep < progressMessages.length) {
+                showLoading(progressMessages[progressStep]);
+                progressStep++;
+            }
+        }, CONFIG.PROGRESS_UPDATE_INTERVAL);
+    }
 
     try {
         const response = await fetch(endpoint, {
@@ -352,6 +403,9 @@ async function sendVerificationRequest(endpoint, base64Data, fileName) {
         });
 
         clearTimeout(timeoutId);
+        if (progressUpdateId) {
+            clearInterval(progressUpdateId);
+        }
 
         if (!response.ok) {
             let errorMessage = `Server error: ${response.status} ${response.statusText}`;
@@ -378,9 +432,12 @@ async function sendVerificationRequest(endpoint, base64Data, fileName) {
 
     } catch (fetchError) {
         clearTimeout(timeoutId);
+        if (progressUpdateId) {
+            clearInterval(progressUpdateId);
+        }
         
         if (fetchError.name === 'AbortError') {
-            throw new Error('Request timeout - the file may be too large or the server is busy. Please try again.');
+            throw new Error('Processing timeout - the file may contain complex signatures or large attachments. Please try again or use specialized verification software.');
         }
         
         if (fetchError.message.includes('fetch')) {
@@ -412,7 +469,7 @@ function displayResults(result) {
     // Build details HTML with sanitization
     let detailsHTML = '';
     
-    // Add error information
+    // Add error information with enhanced formatting
     if (result.error) {
         detailsHTML += createDetailRow('Error', escapeHtml(result.error));
     }
@@ -420,6 +477,11 @@ function displayResults(result) {
     // Add basic information
     detailsHTML += createDetailRow('File Name', escapeHtml(result.fileName));
     detailsHTML += createDetailRow('Format', escapeHtml(result.format));
+    
+    // Add processing time
+    if (result.processingTime) {
+        detailsHTML += createDetailRow('Processing Time', `${result.processingTime}ms`);
+    }
     
     // Add verification type
     if (result.cryptographicVerification !== undefined) {
@@ -482,6 +544,12 @@ function displayResults(result) {
         detailsHTML += createDetailRow('Warnings', warningsText, '#f57c00');
     }
     
+    // Add troubleshooting information if available
+    if (result.troubleshooting && result.troubleshooting.length > 0) {
+        const troubleshootingText = result.troubleshooting.map(t => '• ' + escapeHtml(t)).join('<br>');
+        detailsHTML += createDetailRow('Troubleshooting Tips', troubleshootingText, '#2196f3');
+    }
+    
     // Helper function to add detail if exists
     function addDetailIfExists(label, value) {
         if (value && value !== 'Unknown') {
@@ -529,10 +597,29 @@ function hideResults() {
     results.classList.remove('show');
 }
 
-// Enhanced error display with types
+// Enhanced error display with suggestions
+function showEnhancedError(categorizedError) {
+    let errorHTML = `<div class="error-main">${categorizedError.message}</div>`;
+    
+    if (categorizedError.suggestions && categorizedError.suggestions.length > 0) {
+        errorHTML += '<div class="error-suggestions">';
+        errorHTML += '<strong>Suggestions:</strong><ul>';
+        categorizedError.suggestions.forEach(suggestion => {
+            errorHTML += `<li>${escapeHtml(suggestion)}</li>`;
+        });
+        errorHTML += '</ul></div>';
+    }
+    
+    errorMessage.innerHTML = errorHTML;
+    errorMessage.className = `error-message ${categorizedError.type} show`;
+}
+
+// Backward compatibility for simple error display
 function showError(message, type = 'error') {
-    errorMessage.textContent = message;
-    errorMessage.className = `error-message ${type} show`;
+    showEnhancedError({
+        message: message,
+        type: type
+    });
 }
 
 function hideError() {
