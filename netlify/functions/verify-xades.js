@@ -23,29 +23,25 @@ exports.handler = async (event, context) => {
   }
 
   try {
-    const { fileData, fileName } = JSON.parse(event.body);
+    const body = JSON.parse(event.body);
+    const { fileData, fileName } = body;
     
     if (!fileData) {
       return {
         statusCode: 400,
         headers,
-        body: JSON.stringify({ error: 'No file data provided' })
+        body: JSON.stringify({ error: 'No file data provided', valid: false })
       };
     }
 
-    // Validate Base64 format
     if (!/^[A-Za-z0-9+/=]+$/.test(fileData)) {
       return {
         statusCode: 400,
         headers,
-        body: JSON.stringify({ 
-          error: 'Invalid Base64 data format',
-          valid: false 
-        })
+        body: JSON.stringify({ error: 'Invalid Base64 data format', valid: false })
       };
     }
 
-    // Validate file size (6MB Netlify limit)
     const estimatedSize = (fileData.length * 3) / 4;
     if (estimatedSize > 6 * 1024 * 1024) {
       return {
@@ -53,7 +49,7 @@ exports.handler = async (event, context) => {
         headers,
         body: JSON.stringify({ 
           error: 'File too large',
-          message: 'File must be under 6MB due to Netlify Functions limit',
+          message: 'File must be under 6MB',
           valid: false
         })
       };
@@ -69,7 +65,7 @@ exports.handler = async (event, context) => {
     };
 
   } catch (error) {
-    console.error('Verification error:', error);
+    console.error('Handler error:', error);
     return {
       statusCode: 500,
       headers,
@@ -86,11 +82,9 @@ async function verifyXAdESSignature(xmlBuffer, fileName) {
   try {
     const xmlString = xmlBuffer.toString('utf-8');
     
-    // Parse XML
     const parser = new DOMParser();
     const doc = parser.parseFromString(xmlString, 'text/xml');
 
-    // Check for parsing errors
     const parserError = doc.getElementsByTagName('parsererror');
     if (parserError.length > 0) {
       return {
@@ -101,13 +95,11 @@ async function verifyXAdESSignature(xmlBuffer, fileName) {
       };
     }
 
-    // Define namespaces
     const select = xpath.useNamespaces({
       'ds': 'http://www.w3.org/2000/09/xmldsig#',
       'xades': 'http://uri.etsi.org/01903/v1.3.2#'
     });
 
-    // Check if XAdES signature exists
     const signatureNodes = select('//ds:Signature', doc);
     if (signatureNodes.length === 0) {
       return {
@@ -120,7 +112,6 @@ async function verifyXAdESSignature(xmlBuffer, fileName) {
 
     const signatureNode = signatureNodes[0];
 
-    // Extract SignatureValue
     const signatureValueNodes = select('.//ds:SignatureValue/text()', signatureNode);
     if (signatureValueNodes.length === 0) {
       return {
@@ -133,7 +124,6 @@ async function verifyXAdESSignature(xmlBuffer, fileName) {
 
     const signatureValue = signatureValueNodes[0].data.replace(/\s/g, '');
 
-    // Extract certificate
     const certNodes = select('.//ds:X509Certificate/text()', signatureNode);
     let cert = null;
     let signerInfo = {
@@ -151,11 +141,10 @@ async function verifyXAdESSignature(xmlBuffer, fileName) {
         cert = forge.pki.certificateFromPem(certPem);
         signerInfo = extractCertificateInfo(cert);
       } catch (e) {
-        // Certificate parsing failed
+        // Ignore
       }
     }
 
-    // Extract SigningTime (XAdES specific)
     let signatureDate = 'Unknown';
     const signingTimeNodes = select('.//xades:SigningTime/text()', signatureNode);
     if (signingTimeNodes.length > 0) {
@@ -166,7 +155,6 @@ async function verifyXAdESSignature(xmlBuffer, fileName) {
       }
     }
 
-    // Extract SignatureMethod
     const signatureMethodNodes = select('.//ds:SignatureMethod/@Algorithm', signatureNode);
     let signatureAlgorithm = 'RSA-SHA256';
     if (signatureMethodNodes.length > 0) {
@@ -177,11 +165,9 @@ async function verifyXAdESSignature(xmlBuffer, fileName) {
       else if (alg.includes('sha1')) signatureAlgorithm = 'RSA-SHA1';
     }
 
-    // Validate XML signature structure
     let structureValid = false;
     
     try {
-      // Check for required elements
       const signedInfoNodes = select('.//ds:SignedInfo', signatureNode);
       const referenceNodes = select('.//ds:Reference', signatureNode);
       
@@ -194,7 +180,6 @@ async function verifyXAdESSignature(xmlBuffer, fileName) {
       structureValid = false;
     }
 
-    // Check certificate validity
     let certValid = true;
     let isSelfSigned = false;
     let certValidFrom = 'Unknown';
@@ -210,12 +195,7 @@ async function verifyXAdESSignature(xmlBuffer, fileName) {
       serialNumber = cert.serialNumber;
     }
 
-    // Determine XAdES level
     const xadesLevel = determineXAdESLevel(doc, select);
-
-    // IMPORTANT: This verification only validates structure and certificate
-    // Full cryptographic verification requires XML canonicalization (C14N)
-    // which is not implemented in this version
     
     const result = {
       valid: structureValid && certValid && cert !== null,
@@ -238,18 +218,16 @@ async function verifyXAdESSignature(xmlBuffer, fileName) {
       warnings: []
     };
 
-    // Add warnings about limitations
-    result.warnings.push('⚠️ Structure-only validation performed (not full cryptographic verification)');
-    result.warnings.push('Full XAdES signature verification requires XML canonicalization (C14N)');
-    result.warnings.push('Consider using specialized XAdES libraries for production validation');
+    result.warnings.push('Structure-only validation (not full cryptographic)');
+    result.warnings.push('Full XAdES requires XML canonicalization');
 
     if (!cert) {
-      result.warnings.push('No certificate found in signature - cannot verify certificate chain');
+      result.warnings.push('No certificate found');
       result.valid = false;
     }
 
     if (isSelfSigned) {
-      result.warnings.push('Certificate is self-signed and not issued by a trusted Certificate Authority');
+      result.warnings.push('Certificate is self-signed');
     }
     
     if (!certValid && cert) {
@@ -257,13 +235,12 @@ async function verifyXAdESSignature(xmlBuffer, fileName) {
     }
 
     if (!structureValid) {
-      result.warnings.push('XML signature structure is incomplete or malformed');
+      result.warnings.push('XML signature structure incomplete');
     }
 
-    result.warnings.push('Certificate revocation status (CRL/OCSP) not checked');
+    result.warnings.push('CRL/OCSP not checked');
 
-    // Add note about what WAS validated
-    result.details = 'Validated: XML structure, certificate parsing, certificate expiry. NOT validated: signature cryptography, XML canonicalization, reference digests.';
+    result.details = 'Validated: XML structure, certificate parsing, expiry. NOT: signature cryptography, canonicalization, digests.';
 
     return result;
 
@@ -302,7 +279,6 @@ function extractCertificateInfo(cert) {
 }
 
 function determineXAdESLevel(doc, select) {
-  // Check for various XAdES levels
   const hasQualifyingProperties = select('//xades:QualifyingProperties', doc).length > 0;
   const hasSignatureTimeStamp = select('//xades:SignatureTimeStamp', doc).length > 0;
   const hasArchiveTimeStamp = select('//xades:ArchiveTimeStamp', doc).length > 0;

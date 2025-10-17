@@ -21,29 +21,25 @@ exports.handler = async (event, context) => {
   }
 
   try {
-    const { fileData, fileName } = JSON.parse(event.body);
+    const body = JSON.parse(event.body);
+    const { fileData, fileName } = body;
     
     if (!fileData) {
       return {
         statusCode: 400,
         headers,
-        body: JSON.stringify({ error: 'No file data provided' })
+        body: JSON.stringify({ error: 'No file data provided', valid: false })
       };
     }
 
-    // Validate Base64 format
     if (!/^[A-Za-z0-9+/=]+$/.test(fileData)) {
       return {
         statusCode: 400,
         headers,
-        body: JSON.stringify({ 
-          error: 'Invalid Base64 data format',
-          valid: false 
-        })
+        body: JSON.stringify({ error: 'Invalid Base64 data format', valid: false })
       };
     }
 
-    // Validate file size (6MB Netlify limit)
     const estimatedSize = (fileData.length * 3) / 4;
     if (estimatedSize > 6 * 1024 * 1024) {
       return {
@@ -51,7 +47,7 @@ exports.handler = async (event, context) => {
         headers,
         body: JSON.stringify({ 
           error: 'File too large',
-          message: 'File must be under 6MB due to Netlify Functions limit',
+          message: 'File must be under 6MB',
           valid: false
         })
       };
@@ -67,7 +63,7 @@ exports.handler = async (event, context) => {
     };
 
   } catch (error) {
-    console.error('Verification error:', error);
+    console.error('Handler error:', error);
     return {
       statusCode: 500,
       headers,
@@ -82,7 +78,6 @@ exports.handler = async (event, context) => {
 
 async function verifyCAdESSignature(dataBuffer, fileName) {
   try {
-    // Parse PKCS#7/CMS structure
     let p7;
     try {
       const der = forge.util.createBuffer(dataBuffer.toString('binary'));
@@ -93,11 +88,10 @@ async function verifyCAdESSignature(dataBuffer, fileName) {
         valid: false,
         format: 'CAdES',
         fileName: fileName,
-        error: 'Invalid CAdES/PKCS#7 structure: ' + e.message
+        error: 'Invalid CAdES/PKCS#7 structure'
       };
     }
 
-    // Check if this is a signed data message
     if (!p7.rawCapture || !p7.rawCapture.signature) {
       return {
         valid: false,
@@ -107,35 +101,28 @@ async function verifyCAdESSignature(dataBuffer, fileName) {
       };
     }
 
-    // Extract certificate information
     if (!p7.certificates || p7.certificates.length === 0) {
       return {
         valid: false,
         format: 'CAdES',
         fileName: fileName,
-        error: 'No certificates found in signature'
+        error: 'No certificates found'
       };
     }
 
     const signerCert = p7.certificates[0];
     const signerInfo = extractCertificateInfo(signerCert);
 
-    // Check for attached or detached signature
     const isDetached = !p7.content || p7.content.length === 0;
 
-    // Verify signature - CORRECTED METHOD
     let signatureValid = false;
     let verificationError = null;
 
     try {
-      // Detect hash algorithm
       const hashAlgorithm = getHashAlgorithmFromDigestOid(p7);
-      
-      // For PKCS#7, we must verify the authenticatedAttributes if present
       const attrs = p7.rawCapture.authenticatedAttributes;
       
       if (attrs) {
-        // Create SET structure for authenticatedAttributes
         const set = forge.asn1.create(
           forge.asn1.Class.UNIVERSAL,
           forge.asn1.Type.SET,
@@ -143,26 +130,20 @@ async function verifyCAdESSignature(dataBuffer, fileName) {
           attrs
         );
         
-        // Convert to DER
         const attrDer = forge.asn1.toDer(set);
-        
-        // Hash the authenticatedAttributes
         const md = forge.md[hashAlgorithm].create();
         md.update(attrDer.data);
         
-        // Verify signature with public key
         const signature = p7.rawCapture.signature;
         const publicKey = signerCert.publicKey;
         signatureValid = publicKey.verify(md.digest().bytes(), signature);
         
-        // For attached signatures, also verify messageDigest attribute
         if (!isDetached && p7.rawCapture.content) {
           let contentDigestValid = false;
           const contentMd = forge.md[hashAlgorithm].create();
           contentMd.update(p7.rawCapture.content);
           const contentDigest = contentMd.digest().bytes();
           
-          // Find messageDigest in authenticatedAttributes
           for (let attr of attrs) {
             try {
               const attrOid = forge.asn1.derToOid(attr.value[0].value);
@@ -172,19 +153,18 @@ async function verifyCAdESSignature(dataBuffer, fileName) {
                 break;
               }
             } catch (e) {
-              // Continue checking other attributes
+              continue;
             }
           }
           
           signatureValid = signatureValid && contentDigestValid;
           
           if (!contentDigestValid) {
-            verificationError = 'Content digest does not match messageDigest attribute';
+            verificationError = 'Content digest mismatch';
           }
         }
         
       } else {
-        // Fallback: signatures without authenticatedAttributes
         if (!isDetached && p7.rawCapture.content) {
           const md = forge.md[hashAlgorithm].create();
           md.update(p7.rawCapture.content);
@@ -192,7 +172,7 @@ async function verifyCAdESSignature(dataBuffer, fileName) {
           const signature = p7.rawCapture.signature;
           signatureValid = signerCert.publicKey.verify(md.digest().bytes(), signature);
         } else {
-          verificationError = 'Detached signature cannot be verified without original content';
+          verificationError = 'Detached signature requires original content';
           signatureValid = false;
         }
       }
@@ -202,14 +182,12 @@ async function verifyCAdESSignature(dataBuffer, fileName) {
       signatureValid = false;
     }
 
-    // Check certificate validity
     const now = new Date();
     const certValid = now >= signerCert.validity.notBefore && 
                      now <= signerCert.validity.notAfter;
 
     const isSelfSigned = signerCert.issuer.hash === signerCert.subject.hash;
 
-    // Extract signing time
     let signatureDate = 'Unknown';
     try {
       if (p7.rawCapture.authenticatedAttributes) {
@@ -222,15 +200,14 @@ async function verifyCAdESSignature(dataBuffer, fileName) {
               break;
             }
           } catch (e) {
-            // Continue checking other attributes
+            continue;
           }
         }
       }
     } catch (e) {
-      // Signing time not available
+      // Ignore
     }
 
-    // Determine signature algorithm
     const signatureAlgorithm = getSignatureAlgorithm(p7);
 
     const result = {
@@ -255,14 +232,14 @@ async function verifyCAdESSignature(dataBuffer, fileName) {
     };
 
     if (isDetached) {
-      result.warnings.push('This is a detached signature - original content not included in signature file');
+      result.warnings.push('Detached signature - original content not included');
       if (!signatureValid) {
-        result.warnings.push('Detached signature cannot be fully verified without the original signed content');
+        result.warnings.push('Cannot verify without original content');
       }
     }
 
     if (isSelfSigned) {
-      result.warnings.push('Certificate is self-signed and not issued by a trusted Certificate Authority');
+      result.warnings.push('Certificate is self-signed');
     }
     
     if (!certValid) {
@@ -270,10 +247,10 @@ async function verifyCAdESSignature(dataBuffer, fileName) {
     }
 
     if (verificationError) {
-      result.warnings.push('Signature verification issue: ' + verificationError);
+      result.warnings.push('Verification issue: ' + verificationError);
     }
 
-    result.warnings.push('Certificate revocation status (CRL/OCSP) not checked - requires external validation');
+    result.warnings.push('CRL/OCSP not checked');
 
     return result;
 
@@ -316,10 +293,8 @@ function getHashAlgorithmFromDigestOid(p7) {
     const oidBuffer = p7.rawCapture.digestAlgorithm;
     if (!oidBuffer) return 'sha256';
     
-    // Convert to OID string
     const oidStr = forge.asn1.derToOid(oidBuffer);
     
-    // Map OID to hash algorithm
     if (oidStr === forge.pki.oids.sha1 || oidStr.includes('1.3.14.3.2.26')) {
       return 'sha1';
     } else if (oidStr === forge.pki.oids.sha256 || oidStr.includes('2.16.840.1.101.3.4.2.1')) {
@@ -330,17 +305,14 @@ function getHashAlgorithmFromDigestOid(p7) {
       return 'sha512';
     }
     
-    return 'sha256'; // default
+    return 'sha256';
   } catch (e) {
-    console.error('Error detecting hash algorithm:', e);
-    return 'sha256'; // default fallback
+    return 'sha256';
   }
 }
 
 function getSignatureAlgorithm(p7) {
   const hashAlg = getHashAlgorithmFromDigestOid(p7);
-  
-  // Format as RSA-[HASH]
   const hashName = hashAlg.toUpperCase();
   return `RSA-${hashName}`;
 }

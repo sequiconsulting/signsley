@@ -19,14 +19,12 @@
   "author": "Signsley",
   "license": "MIT",
   "dependencies": {
-    "@signpdf/signpdf": "^3.2.5",
-    "@signpdf/utils": "^3.2.4",
     "node-forge": "^1.3.1",
     "pdf-parse": "^1.1.1",
     "xmldom": "^0.6.0",
     "xpath": "^0.0.32"
   },
   "devDependencies": {
-    "netlify-cli": "^17.0.0"
+    "netlify-cli": "^17.36.4"
   }
 }
