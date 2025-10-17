@@ -1,5 +1,22 @@
 const forge = require('node-forge');
 
+// Format date to YYYY/MM/DD
+function formatDate(date) {
+  if (!date) return 'Unknown';
+  try {
+    const d = date instanceof Date ? date : new Date(date);
+    if (isNaN(d.getTime())) return 'Unknown';
+    
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    
+    return `${year}/${month}/${day}`;
+  } catch (e) {
+    return 'Unknown';
+  }
+}
+
 exports.handler = async (event, context) => {
   const headers = {
     'Access-Control-Allow-Origin': '*',
@@ -210,7 +227,7 @@ async function verifyCAdESSignature(dataBuffer, fileName) {
             const attrOid = forge.asn1.derToOid(attr.value[0].value);
             if (attrOid === forge.pki.oids.signingTime) {
               const timeValue = attr.value[1].value[0].value;
-              signatureDate = new Date(timeValue).toLocaleString();
+              signatureDate = formatDate(new Date(timeValue));
               break;
             }
           } catch (e) {
@@ -238,8 +255,8 @@ async function verifyCAdESSignature(dataBuffer, fileName) {
       signatureDate: signatureDate,
       signatureAlgorithm: signatureAlgorithm,
       certificateIssuer: signerInfo.issuer,
-      certificateValidFrom: signerCert.validity.notBefore.toLocaleDateString(),
-      certificateValidTo: signerCert.validity.notAfter.toLocaleDateString(),
+      certificateValidFrom: formatDate(signerCert.validity.notBefore),
+      certificateValidTo: formatDate(signerCert.validity.notAfter),
       serialNumber: signerCert.serialNumber,
       isSelfSigned: isSelfSigned,
       certificateChainLength: p7.certificates.length,

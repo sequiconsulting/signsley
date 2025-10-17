@@ -2,6 +2,23 @@ const { DOMParser } = require('xmldom');
 const xpath = require('xpath');
 const forge = require('node-forge');
 
+// Format date to YYYY/MM/DD
+function formatDate(date) {
+  if (!date) return 'Unknown';
+  try {
+    const d = date instanceof Date ? date : new Date(date);
+    if (isNaN(d.getTime())) return 'Unknown';
+    
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    
+    return `${year}/${month}/${day}`;
+  } catch (e) {
+    return 'Unknown';
+  }
+}
+
 exports.handler = async (event, context) => {
   const headers = {
     'Access-Control-Allow-Origin': '*',
@@ -149,7 +166,7 @@ async function verifyXAdESSignature(xmlBuffer, fileName) {
     const signingTimeNodes = select('.//xades:SigningTime/text()', signatureNode);
     if (signingTimeNodes.length > 0) {
       try {
-        signatureDate = new Date(signingTimeNodes[0].data).toLocaleString();
+        signatureDate = formatDate(new Date(signingTimeNodes[0].data));
       } catch (e) {
         signatureDate = signingTimeNodes[0].data;
       }
@@ -190,8 +207,8 @@ async function verifyXAdESSignature(xmlBuffer, fileName) {
       const now = new Date();
       certValid = now >= cert.validity.notBefore && now <= cert.validity.notAfter;
       isSelfSigned = cert.issuer.hash === cert.subject.hash;
-      certValidFrom = cert.validity.notBefore.toLocaleDateString();
-      certValidTo = cert.validity.notAfter.toLocaleDateString();
+      certValidFrom = formatDate(cert.validity.notBefore);
+      certValidTo = formatDate(cert.validity.notAfter);
       serialNumber = cert.serialNumber;
     }
 

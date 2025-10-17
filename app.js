@@ -10,6 +10,23 @@ const resultTitle = document.getElementById('resultTitle');
 const resultDetails = document.getElementById('resultDetails');
 const errorMessage = document.getElementById('errorMessage');
 
+// Format date to YYYY/MM/DD
+function formatDate(dateString) {
+    if (!dateString || dateString === 'Unknown') return 'Unknown';
+    try {
+        const date = new Date(dateString);
+        if (isNaN(date.getTime())) return dateString;
+        
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        
+        return `${year}/${month}/${day}`;
+    } catch (e) {
+        return dateString;
+    }
+}
+
 uploadSection.addEventListener('dragover', (e) => {
     e.preventDefault();
     uploadSection.classList.add('dragover');
@@ -263,7 +280,7 @@ function displayResults(result) {
         detailsHTML += `
             <div class="detail-row">
                 <div class="detail-label">Signature Date:</div>
-                <div class="detail-value">${escapeHtml(result.signatureDate)}</div>
+                <div class="detail-value">${escapeHtml(formatDate(result.signatureDate))}</div>
             </div>
         `;
     }
@@ -290,7 +307,7 @@ function displayResults(result) {
         detailsHTML += `
             <div class="detail-row">
                 <div class="detail-label">Certificate Valid From:</div>
-                <div class="detail-value">${escapeHtml(result.certificateValidFrom)}</div>
+                <div class="detail-value">${escapeHtml(formatDate(result.certificateValidFrom))}</div>
             </div>
         `;
     }
@@ -299,7 +316,7 @@ function displayResults(result) {
         detailsHTML += `
             <div class="detail-row">
                 <div class="detail-label">Certificate Valid To:</div>
-                <div class="detail-value">${escapeHtml(result.certificateValidTo)}</div>
+                <div class="detail-value">${escapeHtml(formatDate(result.certificateValidTo))}</div>
             </div>
         `;
     }
