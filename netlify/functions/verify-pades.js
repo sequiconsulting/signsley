@@ -39,6 +39,32 @@ exports.handler = async (event, context) => {
       };
     }
 
+    // Validate Base64 format
+    if (!/^[A-Za-z0-9+/=]+$/.test(fileData)) {
+      return {
+        statusCode: 400,
+        headers,
+        body: JSON.stringify({ 
+          error: 'Invalid Base64 data format',
+          valid: false 
+        })
+      };
+    }
+
+    // Validate file size (6MB Netlify limit)
+    const estimatedSize = (fileData.length * 3) / 4;
+    if (estimatedSize > 6 * 1024 * 1024) {
+      return {
+        statusCode: 413,
+        headers,
+        body: JSON.stringify({ 
+          error: 'File too large',
+          message: 'File must be under 6MB due to Netlify Functions limit',
+          valid: false
+        })
+      };
+    }
+
     // Convert base64 to buffer
     const buffer = Buffer.from(fileData, 'base64');
     
@@ -125,24 +151,77 @@ async function verifyPAdESSignature(pdfBuffer, fileName) {
       pdfBuffer.slice(byteRange[2], byteRange[2] + byteRange[3])
     ]);
 
-    // Verify the signature
+    // Verify the signature - CORRECTED METHOD
     let signatureValid = false;
     let verificationError = null;
     
     try {
-      // Create message digest
-      const md = forge.md.sha256.create();
-      md.update(signedData.toString('binary'));
+      // Detect hash algorithm from signature
+      const hashAlgorithm = getHashAlgorithmFromDigestOid(p7);
       
-      // Get the signature from PKCS#7
-      const signature = p7.rawCapture.signature;
+      // For PKCS#7, we must verify the authenticatedAttributes, not the content directly
+      const attrs = p7.rawCapture.authenticatedAttributes;
       
-      // Verify signature with public key
-      const publicKey = signerCert.publicKey;
-      signatureValid = publicKey.verify(md.digest().bytes(), signature);
+      if (attrs) {
+        // Create SET structure for authenticatedAttributes (required for PKCS#7)
+        const set = forge.asn1.create(
+          forge.asn1.Class.UNIVERSAL,
+          forge.asn1.Type.SET,
+          true,
+          attrs
+        );
+        
+        // Convert to DER
+        const attrDer = forge.asn1.toDer(set);
+        
+        // Hash the authenticatedAttributes
+        const md = forge.md[hashAlgorithm].create();
+        md.update(attrDer.data);
+        
+        // Verify signature with public key
+        const signature = p7.rawCapture.signature;
+        const publicKey = signerCert.publicKey;
+        signatureValid = publicKey.verify(md.digest().bytes(), signature);
+        
+        // Also verify that messageDigest attribute matches the actual content hash
+        let contentDigestValid = false;
+        const contentMd = forge.md[hashAlgorithm].create();
+        contentMd.update(signedData.toString('binary'));
+        const contentDigest = contentMd.digest().bytes();
+        
+        // Find messageDigest in authenticatedAttributes
+        for (let attr of attrs) {
+          try {
+            const attrOid = forge.asn1.derToOid(attr.value[0].value);
+            if (attrOid === forge.pki.oids.messageDigest) {
+              const attrDigest = attr.value[1].value[0].value;
+              contentDigestValid = (attrDigest === contentDigest);
+              break;
+            }
+          } catch (e) {
+            // Continue checking other attributes
+          }
+        }
+        
+        // Signature is only valid if both signature and content digest are valid
+        signatureValid = signatureValid && contentDigestValid;
+        
+        if (!contentDigestValid) {
+          verificationError = 'Content digest does not match messageDigest attribute';
+        }
+        
+      } else {
+        // Fallback: signatures without authenticatedAttributes (rare, but possible)
+        const md = forge.md[hashAlgorithm].create();
+        md.update(signedData.toString('binary'));
+        
+        const signature = p7.rawCapture.signature;
+        signatureValid = signerCert.publicKey.verify(md.digest().bytes(), signature);
+      }
       
     } catch (e) {
       verificationError = e.message;
+      signatureValid = false;
     }
 
     // Check certificate validity
@@ -160,15 +239,25 @@ async function verifyPAdESSignature(pdfBuffer, fileName) {
       if (attrs) {
         // Look for signing time attribute
         for (let attr of attrs) {
-          if (attr.type === forge.pki.oids.signingTime) {
-            signatureDate = new Date(attr.value).toLocaleString();
-            break;
+          try {
+            const attrOid = forge.asn1.derToOid(attr.value[0].value);
+            if (attrOid === forge.pki.oids.signingTime) {
+              // Signing time is in the second value
+              const timeValue = attr.value[1].value[0].value;
+              signatureDate = new Date(timeValue).toLocaleString();
+              break;
+            }
+          } catch (e) {
+            // Continue checking other attributes
           }
         }
       }
     } catch (e) {
       // Signing time not available
     }
+
+    // Get signature algorithm
+    const signatureAlgorithm = getSignatureAlgorithm(p7);
 
     // Build result
     const result = {
@@ -182,7 +271,7 @@ async function verifyPAdESSignature(pdfBuffer, fileName) {
       organization: signerInfo.organization,
       email: signerInfo.email,
       signatureDate: signatureDate,
-      signatureAlgorithm: getSignatureAlgorithm(p7),
+      signatureAlgorithm: signatureAlgorithm,
       certificateIssuer: signerInfo.issuer,
       certificateValidFrom: signerCert.validity.notBefore.toLocaleDateString(),
       certificateValidTo: signerCert.validity.notAfter.toLocaleDateString(),
@@ -201,7 +290,7 @@ async function verifyPAdESSignature(pdfBuffer, fileName) {
     }
 
     if (verificationError) {
-      result.warnings.push('Signature verification error: ' + verificationError);
+      result.warnings.push('Signature verification issue: ' + verificationError);
     }
 
     // Note about revocation
@@ -227,7 +316,21 @@ function extractSignatureHex(pdfString, byteRange) {
     return null;
   }
   
-  return pdfString.substring(start, end);
+  const hex = pdfString.substring(start, end);
+  
+  // Validate hex format (should only contain 0-9, A-F, a-f)
+  if (!/^[0-9A-Fa-f]+$/.test(hex)) {
+    console.error('Invalid hex signature format');
+    return null;
+  }
+  
+  // Validate length (should be even)
+  if (hex.length % 2 !== 0) {
+    console.error('Signature hex has odd length');
+    return null;
+  }
+  
+  return hex;
 }
 
 function hexToBytes(hex) {
@@ -262,15 +365,36 @@ function extractCertificateInfo(cert) {
   return info;
 }
 
-function getSignatureAlgorithm(p7) {
+function getHashAlgorithmFromDigestOid(p7) {
   try {
-    const oid = p7.rawCapture.digestAlgorithm;
-    if (oid.includes('sha256')) return 'RSA-SHA256';
-    if (oid.includes('sha384')) return 'RSA-SHA384';
-    if (oid.includes('sha512')) return 'RSA-SHA512';
-    if (oid.includes('sha1')) return 'RSA-SHA1';
-    return 'RSA-SHA256 (default)';
+    const oidBuffer = p7.rawCapture.digestAlgorithm;
+    if (!oidBuffer) return 'sha256';
+    
+    // Convert to OID string
+    const oidStr = forge.asn1.derToOid(oidBuffer);
+    
+    // Map OID to hash algorithm
+    if (oidStr === forge.pki.oids.sha1 || oidStr.includes('1.3.14.3.2.26')) {
+      return 'sha1';
+    } else if (oidStr === forge.pki.oids.sha256 || oidStr.includes('2.16.840.1.101.3.4.2.1')) {
+      return 'sha256';
+    } else if (oidStr === forge.pki.oids.sha384 || oidStr.includes('2.16.840.1.101.3.4.2.2')) {
+      return 'sha384';
+    } else if (oidStr === forge.pki.oids.sha512 || oidStr.includes('2.16.840.1.101.3.4.2.3')) {
+      return 'sha512';
+    }
+    
+    return 'sha256'; // default
   } catch (e) {
-    return 'RSA-SHA256';
+    console.error('Error detecting hash algorithm:', e);
+    return 'sha256'; // default fallback
   }
+}
+
+function getSignatureAlgorithm(p7) {
+  const hashAlg = getHashAlgorithmFromDigestOid(p7);
+  
+  // Format as RSA-[HASH]
+  const hashName = hashAlg.toUpperCase();
+  return `RSA-${hashName}`;
 }

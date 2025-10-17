@@ -33,6 +33,32 @@ exports.handler = async (event, context) => {
       };
     }
 
+    // Validate Base64 format
+    if (!/^[A-Za-z0-9+/=]+$/.test(fileData)) {
+      return {
+        statusCode: 400,
+        headers,
+        body: JSON.stringify({ 
+          error: 'Invalid Base64 data format',
+          valid: false 
+        })
+      };
+    }
+
+    // Validate file size (6MB Netlify limit)
+    const estimatedSize = (fileData.length * 3) / 4;
+    if (estimatedSize > 6 * 1024 * 1024) {
+      return {
+        statusCode: 413,
+        headers,
+        body: JSON.stringify({ 
+          error: 'File too large',
+          message: 'File must be under 6MB due to Netlify Functions limit',
+          valid: false
+        })
+      };
+    }
+
     const buffer = Buffer.from(fileData, 'base64');
     const result = await verifyXAdESSignature(buffer, fileName);
     
@@ -151,22 +177,21 @@ async function verifyXAdESSignature(xmlBuffer, fileName) {
       else if (alg.includes('sha1')) signatureAlgorithm = 'RSA-SHA1';
     }
 
-    // Attempt basic signature verification
-    let signatureValid = false;
-    let verificationError = null;
-
-    if (cert) {
-      try {
-        // Get SignedInfo
-        const signedInfoNodes = select('.//ds:SignedInfo', signatureNode);
-        if (signedInfoNodes.length > 0) {
-          // This is a simplified verification - full XML canonicalization required for proper validation
-          signatureValid = true; // Structure validation passed
-          verificationError = 'Full cryptographic validation requires XML canonicalization';
-        }
-      } catch (e) {
-        verificationError = e.message;
-      }
+    // Validate XML signature structure
+    let structureValid = false;
+    
+    try {
+      // Check for required elements
+      const signedInfoNodes = select('.//ds:SignedInfo', signatureNode);
+      const referenceNodes = select('.//ds:Reference', signatureNode);
+      
+      structureValid = (
+        signedInfoNodes.length > 0 &&
+        referenceNodes.length > 0 &&
+        signatureValueNodes.length > 0
+      );
+    } catch (e) {
+      structureValid = false;
     }
 
     // Check certificate validity
@@ -188,12 +213,20 @@ async function verifyXAdESSignature(xmlBuffer, fileName) {
     // Determine XAdES level
     const xadesLevel = determineXAdESLevel(doc, select);
 
+    // IMPORTANT: This verification only validates structure and certificate
+    // Full cryptographic verification requires XML canonicalization (C14N)
+    // which is not implemented in this version
+    
     const result = {
-      valid: signatureValid && certValid,
+      // CHANGED: Set valid to false since we're only doing structure validation
+      valid: false,
+      structureValid: structureValid,
       format: `XAdES (XML Advanced Electronic Signature) - ${xadesLevel}`,
       fileName: fileName,
-      cryptographicVerification: true,
-      signatureValid: signatureValid,
+      // CHANGED: Set to false since we're not performing cryptographic verification
+      cryptographicVerification: false,
+      // CHANGED: Set to null since we're not performing signature verification
+      signatureValid: null,
       certificateValid: certValid,
       signedBy: signerInfo.commonName,
       organization: signerInfo.organization,
@@ -208,6 +241,12 @@ async function verifyXAdESSignature(xmlBuffer, fileName) {
       warnings: []
     };
 
+    // IMPORTANT: Add clear warning about limitations
+    result.warnings.push('⚠️ IMPORTANT: This is STRUCTURE-ONLY validation');
+    result.warnings.push('Full cryptographic signature verification NOT performed');
+    result.warnings.push('XAdES signatures require XML canonicalization (C14N) for proper verification');
+    result.warnings.push('Consider using specialized XAdES validation libraries (e.g., xml-crypto, xades4node)');
+
     if (!cert) {
       result.warnings.push('No certificate found in signature - cannot verify certificate chain');
     }
@@ -220,12 +259,14 @@ async function verifyXAdESSignature(xmlBuffer, fileName) {
       result.warnings.push('Certificate is expired or not yet valid');
     }
 
-    if (verificationError) {
-      result.warnings.push('Verification note: ' + verificationError);
+    if (!structureValid) {
+      result.warnings.push('XML signature structure is incomplete or malformed');
     }
 
-    result.warnings.push('Full XAdES validation requires XML canonicalization and may require external validation services');
     result.warnings.push('Certificate revocation status (CRL/OCSP) not checked');
+
+    // Add note about what WAS validated
+    result.details = 'Validated: XML structure, certificate parsing, certificate expiry. NOT validated: signature cryptography, XML canonicalization, reference digests.';
 
     return result;
 
