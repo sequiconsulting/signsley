@@ -1,0 +1,5 @@
+/* Signsley styles additions for collapsible chains */
+.signature-card .chain-toggle{cursor:pointer;display:inline-flex;align-items:center;gap:6px;color:#2196f3;font-weight:600}
+.signature-card .chain-toggle:hover{text-decoration:underline}
+.signature-card .chain-panel{display:none;margin-top:0.5rem;padding:0.75rem;background:var(--bg-secondary);border-radius:8px;border-left:4px solid #2196f3}
+.signature-card .chain-panel.show{display:block}
