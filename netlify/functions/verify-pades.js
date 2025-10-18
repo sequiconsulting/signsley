@@ -60,7 +60,53 @@ function bytesFromHex(hex) {
   return Buffer.from(hex, 'hex');
 }
 
-// ULTIMATE: Maximum hex extraction strategies with advanced pattern recognition
+// DER LENGTH CALCULATION AND VALIDATION
+function getDERLength(hexString) {
+  try {
+    if (hexString.length < 4) return null;
+
+    const bytes = bytesFromHex(hexString.substring(0, 20)); // First 10 bytes should be enough
+    let offset = 0;
+
+    // Skip tag
+    offset++;
+
+    // Read length
+    const firstLengthByte = bytes[offset++];
+
+    if ((firstLengthByte & 0x80) === 0) {
+      // Short form
+      return 2 + firstLengthByte; // tag + length + content
+    } else {
+      // Long form
+      const lengthOfLength = firstLengthByte & 0x7f;
+      if (lengthOfLength === 0 || lengthOfLength > 4) return null;
+
+      let contentLength = 0;
+      for (let i = 0; i < lengthOfLength; i++) {
+        contentLength = (contentLength << 8) | bytes[offset++];
+      }
+
+      return 2 + lengthOfLength + contentLength; // tag + length octets + content
+    }
+  } catch {
+    return null;
+  }
+}
+
+function validateAndTrimDER(hexString) {
+  const expectedLength = getDERLength(hexString);
+  if (!expectedLength) return hexString;
+
+  const expectedHexLength = expectedLength * 2;
+  if (hexString.length > expectedHexLength) {
+    console.log(`Trimming DER from ${hexString.length} to ${expectedHexLength} characters`);
+    return hexString.substring(0, expectedHexLength);
+  }
+
+  return hexString;
+}
+
 function extractAllHexContents(pdfString) {
   const allHex = [];
   console.log(`Starting hex extraction from PDF of length ${pdfString.length}`);
@@ -85,7 +131,7 @@ function extractAllHexContents(pdfString) {
     }
   });
 
-  // Strategy 2: Signature dictionary patterns (enhanced)
+  // Strategy 2: Signature dictionary patterns
   const sigPatterns = [
     /\/Type\s*\/Sig[^>]*>([^<]*)<([0-9a-fA-F\s\r\n]{100,}?)>/gi,
     /\/SubFilter\s*\/[^>]*>([^<]*)<([0-9a-fA-F\s\r\n]{100,}?)>/gi,
@@ -112,8 +158,8 @@ function extractAllHexContents(pdfString) {
     /\[([0-9a-fA-F\s\r\n]{200,}?)\]/g,
     /\(([0-9a-fA-F\s\r\n]{200,}?)\)/g,
     /([0-9a-fA-F\s\r\n]{800,})/g,
-    /<([0-9a-fA-F]{200,})>/g,  // No whitespace version
-    /([0-9a-fA-F]{1000,})/g,   // Long continuous hex
+    /<([0-9a-fA-F]{200,})>/g,
+    /([0-9a-fA-F]{1000,})/g,
   ];
 
   hexPatterns.forEach((pattern, idx) => {
@@ -132,7 +178,7 @@ function extractAllHexContents(pdfString) {
     /<(308[0-9a-fA-F][0-9a-fA-F\s\r\n]{200,}?)>/g,
     /<(3082[0-9a-fA-F]{4}[0-9a-fA-F\s\r\n]{200,}?)>/g,
     /<(3084[0-9a-fA-F]{8}[0-9a-fA-F\s\r\n]{200,}?)>/g,
-    /(30[0-9a-fA-F]{2}[0-9a-fA-F]{200,})/g,  // Direct ASN.1 without brackets
+    /(30[0-9a-fA-F]{2}[0-9a-fA-F]{200,})/g,
   ];
 
   asn1Patterns.forEach((pattern, idx) => {
@@ -146,44 +192,7 @@ function extractAllHexContents(pdfString) {
     }
   });
 
-  // Strategy 5: Adobe and digital signature specific patterns
-  const adobePatterns = [
-    /\/Adobe\.PPKLite[\s\S]*?<([0-9a-fA-F\s\r\n]{200,}?)>/gi,
-    /\/adbe\.pkcs7[\s\S]*?<([0-9a-fA-F\s\r\n]{200,}?)>/gi,
-    /\/PKCS#7[\s\S]*?<([0-9a-fA-F\s\r\n]{200,}?)>/gi,
-    /digitalsignature[\s\S]*?<([0-9a-fA-F\s\r\n]{200,}?)>/gi,
-    /signature[\s\S]*?<([0-9a-fA-F\s\r\n]{200,}?)>/gi,
-  ];
-
-  adobePatterns.forEach((pattern, idx) => {
-    let m;
-    while ((m = pattern.exec(pdfString)) !== null) {
-      const hex = m[1].replace(/[\s\r\n]+/g, '');
-      if (hex.length > 200) {
-        allHex.push({ hex, position: m.index, method: `adobe_${idx}`, confidence: 9 - idx });
-      }
-    }
-  });
-
-  // Strategy 6: Multi-line and wrapped patterns
-  const multilinePatterns = [
-    /<\n?([0-9a-fA-F\s\r\n]{500,}?)\n?>/gi,
-    /<\r?\n?([0-9a-fA-F\s\r\n]{500,}?)\r?\n?>/gi,
-    /<([0-9a-fA-F]+(?:[\s\r\n]+[0-9a-fA-F]+)*?)>/g,
-    /<([0-9a-fA-F\r\n\s]{500,})>/gi,
-  ];
-
-  multilinePatterns.forEach((pattern, idx) => {
-    let m;
-    while ((m = pattern.exec(pdfString)) !== null) {
-      const hex = m[1].replace(/[\s\r\n]+/g, '');
-      if (hex.length > 500) {
-        allHex.push({ hex, position: m.index, method: `multiline_${idx}`, confidence: 8 - idx });
-      }
-    }
-  });
-
-  // Strategy 7: Base64 encoded signatures (new approach)
+  // Strategy 5: Base64 encoded signatures
   const base64Pattern = /([A-Za-z0-9+\/]{200,}={0,2})/g;
   let b64Match;
   while ((b64Match = base64Pattern.exec(pdfString)) !== null) {
@@ -197,38 +206,13 @@ function extractAllHexContents(pdfString) {
     } catch {}
   }
 
-  // Strategy 8: Binary stream analysis (enhanced)
-  const streamPatterns = [
-    /stream\s*\n([\s\S]*?)\nendstream/gi,
-    /stream\r?\n([\s\S]*?)\r?\nendstream/gi,
-    /BT[\s\S]*?ET/gi,  // Text objects
-    /q[\s\S]*?Q/gi,    // Graphics state
-  ];
-
-  streamPatterns.forEach((pattern, idx) => {
-    let m;
-    while ((m = pattern.exec(pdfString)) !== null) {
-      const content = m[1];
-      // Look for hex in streams
-      const streamHexPattern = /([0-9a-fA-F]{400,})/g;
-      let streamMatch;
-      while ((streamMatch = streamHexPattern.exec(content)) !== null) {
-        const hex = streamMatch[1];
-        if (isPotentialPKCS7Signature(hex)) {
-          allHex.push({ hex, position: m.index, method: `stream_${idx}`, confidence: 5 });
-        }
-      }
-    }
-  });
-
-  // Strategy 9: Object-level hex search (new)
+  // Strategy 6: Object-level hex search
   const objPattern = /(\d+)\s+(\d+)\s+obj[\s\S]*?endobj/gi;
   let objMatch;
   while ((objMatch = objPattern.exec(pdfString)) !== null) {
     const objContent = objMatch[0];
     const objNum = objMatch[1];
 
-    // Look for hex in objects
     const objHexPattern = /([0-9a-fA-F]{300,})/g;
     let hexMatch;
     while ((hexMatch = objHexPattern.exec(objContent)) !== null) {
@@ -246,34 +230,15 @@ function extractAllHexContents(pdfString) {
     }
   }
 
-  // Strategy 10: Compressed stream handling (new)
-  const flatePattern = /\/Filter\s*\/FlateDecode[\s\S]*?stream\s*\n([\s\S]*?)\nendstream/gi;
-  let flateMatch;
-  while ((flateMatch = flatePattern.exec(pdfString)) !== null) {
-    try {
-      // Try to find hex patterns even in compressed streams
-      const compressedContent = flateMatch[1];
-      const hexInCompressed = /([0-9a-fA-F]{200,})/g;
-      let compHex;
-      while ((compHex = hexInCompressed.exec(compressedContent)) !== null) {
-        const hex = compHex[1];
-        if (hex.length > 300) {
-          allHex.push({ hex, position: flateMatch.index, method: 'flate_stream', confidence: 4 });
-        }
-      }
-    } catch {}
-  }
-
   // Remove duplicates and sort by confidence
   const seen = new Set();
   const unique = allHex.filter(item => {
-    const key = item.hex.substring(0, 300); // Larger key for better deduplication
+    const key = item.hex.substring(0, 300);
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
 
-  // Enhanced sorting by confidence, length, and PKCS#7 likelihood
   unique.sort((a, b) => {
     const aScore = (a.confidence || 0) + (isPotentialPKCS7Signature(a.hex) ? 2 : 0) + (a.hex.length / 10000);
     const bScore = (b.confidence || 0) + (isPotentialPKCS7Signature(b.hex) ? 2 : 0) + (b.hex.length / 10000);
@@ -282,7 +247,7 @@ function extractAllHexContents(pdfString) {
 
   console.log(`Found ${unique.length} unique potential signature hex blocks (from ${allHex.length} total)`);
   unique.forEach((item, idx) => {
-    if (idx < 5) { // Log top 5
+    if (idx < 5) {
       console.log(`Hex block ${idx + 1}: method=${item.method}, confidence=${item.confidence}, length=${item.hex.length}`);
     }
   });
@@ -298,7 +263,7 @@ function findByteRanges(pdfString) {
     /\/ByteRange\s*\[([^\]]+)\]/g,
     /ByteRange\s*\[\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*\]/g,
     /R\s*\/ByteRange\s*\[\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*\]/g,
-    /\/ByteRange\[(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\]/g,  // No spaces
+    /\/ByteRange\[(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\]/g,
   ];
 
   patterns.forEach((pattern, idx) => {
@@ -340,12 +305,12 @@ function findAllSignatures(buffer) {
 
   console.log(`Processing ${byteRanges.length} byte ranges and ${hexContents.length} hex contents`);
 
-  // Strategy 1: Enhanced byte range proximity matching
+  // Strategy 1: Byte range proximity matching
   for (const br of byteRanges) {
     let closestHex = null, minDistance = Infinity;
     for (const hc of hexContents) {
       const d = Math.abs(hc.position - br.position);
-      if (d < minDistance && d < 500000) { // Very large search distance
+      if (d < minDistance && d < 500000) {
         minDistance = d; 
         closestHex = hc; 
       }
@@ -380,81 +345,8 @@ function findAllSignatures(buffer) {
     }
   }
 
-  // Strategy 3: Certificate and signature object proximity
-  const certPatterns = [
-    /-----BEGIN CERTIFICATE-----([\s\S]*?)-----END CERTIFICATE-----/gi,
-    /MII[A-Za-z0-9+\/]{100,}/g,
-    /308[0-9a-fA-F]{2}[0-9a-fA-F]{200,}/gi,
-    /digitally signed by/gi,
-    /Sequi Samuele/gi,
-  ];
-
-  certPatterns.forEach((pattern, patIdx) => {
-    let certMatch;
-    while ((certMatch = pattern.exec(pdfString)) !== null) {
-      console.log(`Found certificate/signature pattern ${patIdx} at position ${certMatch.index}`);
-
-      // Large proximity search
-      const searchStart = Math.max(0, certMatch.index - 50000);
-      const searchEnd = Math.min(pdfString.length, certMatch.index + 50000);
-      const nearbyContent = pdfString.substring(searchStart, searchEnd);
-
-      const nearbyHexPattern = /([0-9a-fA-F]{500,})/g;
-      let nearbyMatch;
-      while ((nearbyMatch = nearbyHexPattern.exec(nearbyContent)) !== null) {
-        const hex = nearbyMatch[1];
-        const key = hex.substring(0, 200);
-        if (!processed.has(key) && isPotentialPKCS7Signature(hex)) {
-          processed.add(key);
-          signatures.push({
-            byteRange: null,
-            signatureHex: hex,
-            method: `cert_proximity_${patIdx}`,
-            confidence: 8
-          });
-          console.log(`Found hex near certificate pattern: ${hex.length} chars`);
-        }
-      }
-    }
-  });
-
-  // Strategy 4: Signature object and dictionary analysis
-  const sigObjPattern = /\d+\s+\d+\s+obj[\s\S]*?(?:\/Type\s*\/Sig|\/Filter\s*\/Adobe|\/SubFilter)[\s\S]*?endobj/gi;
-  let objMatch;
-  while ((objMatch = sigObjPattern.exec(pdfString)) !== null) {
-    console.log('Found signature object');
-    const objContent = objMatch[0];
-
-    // Multiple hex extraction strategies within objects
-    const objectHexPatterns = [
-      /([0-9a-fA-F]{200,})/g,
-      /<([0-9a-fA-F\s\r\n]{200,})>/g,
-      /\[([0-9a-fA-F\s\r\n]{200,})\]/g,
-    ];
-
-    objectHexPatterns.forEach((pattern, patIdx) => {
-      let hexMatch;
-      while ((hexMatch = pattern.exec(objContent)) !== null) {
-        const hex = hexMatch[1].replace(/[\s\r\n]+/g, '');
-        const key = hex.substring(0, 200);
-        if (!processed.has(key) && hex.length > 300) {
-          processed.add(key);
-          signatures.push({
-            byteRange: null,
-            signatureHex: hex,
-            method: `obj_hex_${patIdx}`,
-            confidence: 7
-          });
-          console.log(`Found hex in signature object: ${hex.length} chars`);
-        }
-      }
-    });
-  }
-
-  // Filter and enhance
-  const filtered = signatures.filter(sig => sig.signatureHex.length >= 400); // Lower threshold
-
-  // Ultimate sorting by multiple criteria
+  // Filter and sort
+  const filtered = signatures.filter(sig => sig.signatureHex.length >= 400);
   filtered.sort((a, b) => {
     const aScore = (a.confidence || 0) * 2 + 
                    (isPotentialPKCS7Signature(a.signatureHex) ? 5 : 0) + 
@@ -473,7 +365,7 @@ function findAllSignatures(buffer) {
 
   console.log(`Found ${filtered.length} potential signatures after filtering`);
   filtered.forEach((sig, idx) => {
-    if (idx < 10) { // Log top 10
+    if (idx < 10) {
       console.log(`Signature ${idx + 1}: ${sig.method}, confidence=${sig.confidence}, length=${sig.signatureHex.length}, pkcs7=${isPotentialPKCS7Signature(sig.signatureHex)}`);
     }
   });
@@ -481,106 +373,109 @@ function findAllSignatures(buffer) {
   return filtered;
 }
 
-// ENHANCED: Ultra-sophisticated PKCS#7 detection
 function isPotentialPKCS7Signature(hex) {
   if (hex.length < 200) return false;
 
   const lowerHex = hex.toLowerCase();
 
-  // Critical PKCS#7 indicators (must have at least one)
-  const criticalIndicators = [
-    '3082',          // SEQUENCE with definite length  
-    '3080',          // SEQUENCE with indefinite length
-    '06092a864886f70d010702',  // PKCS#7 signedData OID
-    '06092a864886f70d010701',  // PKCS#7 data OID
-    '06092a864886f70d01',      // PKCS OID prefix
+  const primaryIndicators = [
+    '3082',          
+    '3080',         
+    '06092a864886f70d010702',
+    '06092a864886f70d010701',
   ];
 
-  let criticalScore = 0;
-  for (const indicator of criticalIndicators) {
-    if (lowerHex.includes(indicator)) {
-      criticalScore += indicator === '3082' ? 3 : indicator === '06092a864886f70d010702' ? 5 : 2;
+  const hasPrimary = primaryIndicators.some(ind => lowerHex.includes(ind));
+  if (!hasPrimary) return false;
+
+  const secondaryIndicators = [
+    '30819f300d',    
+    '308201',        
+    '30820',         
+    '06092a864886f70d01',      
+    'a08082',        
+    '02',            
+    '04',            
+    '31',            
+    '30',            
+    '06',            
+  ];
+
+  let score = 0;
+  for (const indicator of secondaryIndicators) {
+    if (lowerHex.includes(indicator.toLowerCase())) {
+      score++;
     }
   }
 
-  if (criticalScore === 0) return false;
-
-  // Supporting indicators
-  const supportingIndicators = [
-    '30819f300d',    // Certificate pattern
-    '308201',        // Another certificate pattern
-    '30820',         // Large structure
-    'a08082',        // Context tag
-    '020[0-9a-f]',   // INTEGER (version, serial, etc.)
-    '04[0-9a-f]{2}', // OCTET STRING
-    '31[0-9a-f]{2}', // SET
-    '1630',          // Another common pattern
-    '0603551d',      // X.509 extension OID
-    '30130603551d25', // Key usage extension
-  ];
-
-  let supportScore = 0;
-  for (const indicator of supportingIndicators) {
-    const regex = new RegExp(indicator, 'i');
-    if (regex.test(lowerHex)) {
-      supportScore++;
-    }
-  }
-
-  // Additional certificate-specific patterns
   const certPatterns = [
-    /308[0-9a-f]{3}30[0-9a-f]{2}/i,  // Cert + TBS sequence
-    /020[0-9a-f]{1,40}30/i,          // Serial + algorithm
-    /30[0-9a-f]{2}06[0-9a-f]{2}/i,   // Algorithm identifier
-    /1e[0-9a-f]{2}00/i,              // UTF16 string
+    /308[0-9a-f]{2}[0-9a-f]{2}/,
+    /020[0-9a-f]/,
+    /30[0-9a-f]{2}06/,
+    /0603551d/,
   ];
 
   for (const pattern of certPatterns) {
     if (pattern.test(lowerHex)) {
-      supportScore += 2;
+      score += 2;
     }
   }
 
-  // Length bonus
-  if (hex.length > 5000) supportScore += 2;
-  if (hex.length > 10000) supportScore += 2;
-
-  const totalScore = criticalScore + supportScore;
-  console.log(`PKCS#7 detection: critical=${criticalScore}, support=${supportScore}, total=${totalScore} (threshold: 6)`);
-
-  return totalScore >= 6;
+  console.log(`PKCS#7 detection score: ${score} (threshold: 4)`);
+  return score >= 4;
 }
 
-// ULTIMATE: Maximum parsing strategies with advanced error handling
+// ENHANCED: DER-aware parsing strategies to handle "Unparsed DER bytes remain" error
 function tryParseSignature(signatureHex) {
   const strategies = [
-    // Strategy 1: Direct parsing
+    // Strategy 1: Direct parsing with DER validation
     () => {
-      console.log('Strategy 1: Direct parsing');
+      console.log('Strategy 1: Direct parsing with DER validation');
+      const trimmed = validateAndTrimDER(signatureHex);
+      if (trimmed !== signatureHex) {
+        return parseDirectly(trimmed);
+      }
       return parseDirectly(signatureHex);
     },
 
-    // Strategy 2: Enhanced truncation with multiple step sizes
+    // Strategy 2: DER length-based truncation
     () => {
-      console.log('Strategy 2: Enhanced progressive truncation');
-      const stepSizes = [100, 250, 500, 1000];
+      console.log('Strategy 2: DER length-based truncation');
+      const derLength = getDERLength(signatureHex);
+      if (derLength && derLength * 2 < signatureHex.length) {
+        const trimmed = signatureHex.substring(0, derLength * 2);
+        console.log(`DER length suggests ${derLength * 2} chars, trying trimmed version`);
+        return parseDirectly(trimmed);
+      }
+      return null;
+    },
+
+    // Strategy 3: Enhanced progressive truncation
+    () => {
+      console.log('Strategy 3: Enhanced progressive truncation');
+      const stepSizes = [2, 4, 8, 16, 32, 64, 128, 256, 512];
       for (const stepSize of stepSizes) {
-        for (let i = signatureHex.length; i >= 500; i -= stepSize) {
+        for (let i = signatureHex.length; i >= 1000; i -= stepSize) {
           try { 
             const r = parseDirectly(signatureHex.substring(0, i)); 
             if (r && r.certificates && r.certificates.length > 0) {
-              console.log(`Truncation succeeded at length ${i} with step ${stepSize}`);
+              console.log(`Progressive truncation succeeded at length ${i} with step ${stepSize}`);
               return r;
             }
-          } catch(e) {} 
+          } catch(e) {
+            if (!e.message.includes('Unparsed DER bytes')) {
+              // Different error, stop trying this length
+              continue;
+            }
+          } 
         } 
       }
       return null; 
     },
 
-    // Strategy 3: Enhanced ASN.1 structure detection
+    // Strategy 4: ASN.1 structure detection with DER validation
     () => {
-      console.log('Strategy 3: Enhanced ASN.1 structure detection');
+      console.log('Strategy 4: ASN.1 structure detection with DER validation');
       const indicators = ['3082', '3080', '3081', '3084', '3030', '308201', '30820'];
       for (const indicator of indicators) {
         const positions = [];
@@ -589,20 +484,17 @@ function tryParseSignature(signatureHex) {
           positions.push(pos);
         }
 
-        // Try both forward and backward from each position
         for (const startPos of positions) {
-          const attempts = [
-            signatureHex.substring(startPos),
-            signatureHex.substring(0, signatureHex.length - startPos),
-            signatureHex.substring(startPos, startPos + 20000),
-          ];
+          const subset = signatureHex.substring(startPos);
+          const trimmed = validateAndTrimDER(subset);
 
+          const attempts = [trimmed, subset];
           for (const attempt of attempts) {
             if (attempt.length > 1000) {
               try { 
                 const r = parseDirectly(attempt);
                 if (r && r.certificates && r.certificates.length > 0) {
-                  console.log(`ASN.1 enhanced succeeded with ${indicator} at position ${startPos}`);
+                  console.log(`ASN.1 DER-aware succeeded with ${indicator} at position ${startPos}`);
                   return r;
                 }
               } catch {} 
@@ -613,53 +505,79 @@ function tryParseSignature(signatureHex) {
       return null; 
     },
 
-    // Strategy 4: Advanced padding and cleanup
+    // Strategy 5: Multiple DER boundary detection
+    () => {
+      console.log('Strategy 5: Multiple DER boundary detection');
+      // Look for multiple SEQUENCE starts and try each one
+      const sequencePattern = /(30[0-9a-fA-F]{2})/gi;
+      const matches = [];
+      let match;
+      while ((match = sequencePattern.exec(signatureHex)) !== null) {
+        matches.push(match.index);
+      }
+
+      console.log(`Found ${matches.length} potential SEQUENCE starts`);
+      for (const startPos of matches.slice(0, 10)) { // Try first 10
+        const subset = signatureHex.substring(startPos);
+        const trimmed = validateAndTrimDER(subset);
+
+        for (const attempt of [trimmed, subset]) {
+          if (attempt.length > 1000) {
+            try {
+              const r = parseDirectly(attempt);
+              if (r && r.certificates && r.certificates.length > 0) {
+                console.log(`Multiple DER boundary detection succeeded at position ${startPos}`);
+                return r;
+              }
+            } catch {}
+          }
+        }
+      }
+      return null;
+    },
+
+    // Strategy 6: Padding and cleanup with DER awareness
     () => { 
-      console.log('Strategy 4: Advanced padding removal');
+      console.log('Strategy 6: Padding removal with DER awareness');
       const variations = [
         signatureHex.replace(/^00+/, ''),
         signatureHex.replace(/00+$/, ''),
         signatureHex.replace(/^00+/, '').replace(/00+$/, ''),
-        signatureHex.replace(/^0+/, ''),
-        signatureHex.replace(/0+$/, ''),
         signatureHex.replace(/[^0-9a-fA-F]/g, ''),
-        signatureHex.replace(/^ff+/i, ''),
-        signatureHex.replace(/ff+$/i, ''),
-        signatureHex.replace(/^(00)+/g, ''),
-        '30' + signatureHex.replace(/^30+/g, ''), // Ensure starts with SEQUENCE
+        '30' + signatureHex.replace(/^30+/g, ''),
       ];
 
       for (const variation of variations) {
         if (variation.length > 1000) {
-          try { 
-            const r = parseDirectly(variation);
-            if (r && r.certificates && r.certificates.length > 0) {
-              console.log('Advanced padding removal succeeded');
-              return r;
-            }
-          } catch {}
+          const trimmed = validateAndTrimDER(variation);
+          for (const attempt of [trimmed, variation]) {
+            try { 
+              const r = parseDirectly(attempt);
+              if (r && r.certificates && r.certificates.length > 0) {
+                console.log('DER-aware padding removal succeeded');
+                return r;
+              }
+            } catch {}
+          }
         }
       }
       return null; 
     },
 
-    // Strategy 5: Multi-size chunk testing
+    // Strategy 7: Chunk testing with DER validation
     () => {
-      console.log('Strategy 5: Multi-size chunk testing');
-      const chunkSizes = [1500, 2000, 3000, 4000, 6000, 8000, 12000, 16000, 20000, 24000, 32000];
+      console.log('Strategy 7: DER-aware chunk testing');
+      const chunkSizes = [2000, 3000, 4000, 6000, 8000, 12000, 16000, 20000];
       for (const size of chunkSizes) {
         if (signatureHex.length > size) {
-          const attempts = [
-            signatureHex.substring(0, size),
-            signatureHex.substring(signatureHex.length - size),
-            signatureHex.substring(Math.floor(signatureHex.length / 2) - size / 2, Math.floor(signatureHex.length / 2) + size / 2),
-          ];
+          const chunk = signatureHex.substring(0, size);
+          const trimmed = validateAndTrimDER(chunk);
 
-          for (const attempt of attempts) {
+          for (const attempt of [trimmed, chunk]) {
             try {
               const r = parseDirectly(attempt);
               if (r && r.certificates && r.certificates.length > 0) {
-                console.log(`Chunk strategy succeeded with size ${size}`);
+                console.log(`DER-aware chunk strategy succeeded with size ${size}`);
                 return r;
               }
             } catch {}
@@ -669,210 +587,52 @@ function tryParseSignature(signatureHex) {
       return null;
     },
 
-    // Strategy 6: Enhanced position offset testing
+    // Strategy 8: Binary search with DER validation
     () => {
-      console.log('Strategy 6: Enhanced position offset testing');
-      const totalLength = signatureHex.length;
-      const positions = [0, 50, 100, 150, 200, 300, 400, 500, 750, 1000, 1500, 2000];
+      console.log('Strategy 8: DER-aware binary search');
+      let left = 1000;
+      let right = signatureHex.length;
+      let bestResult = null;
+      let iterations = 0;
+      const maxIterations = 30;
 
-      // Add percentage-based positions
-      for (let pct = 0; pct <= 20; pct += 2) {
-        positions.push(Math.floor(totalLength * pct / 100));
-      }
+      while (left < right && right - left > 100 && iterations < maxIterations) {
+        iterations++;
+        const mid = Math.floor((left + right) / 2);
+        const subset = signatureHex.substring(0, mid);
+        const trimmed = validateAndTrimDER(subset);
 
-      for (const start of [...new Set(positions)]) {
-        if (totalLength > start + 1000) {
-          const lengths = [totalLength - start, 10000, 20000, 30000];
-          for (const len of lengths) {
-            const end = Math.min(totalLength, start + len);
-            if (end - start > 1000) {
-              try {
-                const subset = signatureHex.substring(start, end);
-                const r = parseDirectly(subset);
-                if (r && r.certificates && r.certificates.length > 0) {
-                  console.log(`Position offset succeeded starting at ${start}, length ${end - start}`);
-                  return r;
-                }
-              } catch {}
-            }
-          }
-        }
-      }
-      return null;
-    },
-
-    // Strategy 7: Enhanced binary search
-    () => {
-      console.log('Strategy 7: Enhanced binary search');
-      const searches = [
-        { start: 1000, end: signatureHex.length },
-        { start: 2000, end: Math.floor(signatureHex.length * 0.8) },
-        { start: 500, end: Math.floor(signatureHex.length * 0.6) },
-      ];
-
-      for (const search of searches) {
-        let left = search.start;
-        let right = search.end;
-        let bestResult = null;
-        let iterations = 0;
-        const maxIterations = 25;
-
-        while (left < right && right - left > 300 && iterations < maxIterations) {
-          iterations++;
-          const mid = Math.floor((left + right) / 2);
+        for (const attempt of [trimmed, subset]) {
           try {
-            const r = parseDirectly(signatureHex.substring(0, mid));
+            const r = parseDirectly(attempt);
             if (r && r.certificates && r.certificates.length > 0) {
               bestResult = r;
               right = mid;
-            } else {
-              left = mid + 1;
+              break;
             }
           } catch {
             left = mid + 1;
+            break;
           }
         }
-
-        if (bestResult) {
-          console.log(`Binary search succeeded after ${iterations} iterations`);
-          return bestResult;
-        }
       }
-      return null;
-    },
 
-    // Strategy 8: Reverse and middle parsing
-    () => {
-      console.log('Strategy 8: Reverse and middle parsing');
-      const strategies = [
-        // Reverse parsing
-        ...Array.from({length: 10}, (_, i) => {
-          const start = signatureHex.length - 1000 - (i * 500);
-          return { type: 'reverse', start: Math.max(1000, start) };
-        }),
-        // Middle parsing
-        ...Array.from({length: 10}, (_, i) => {
-          const center = Math.floor(signatureHex.length / 2);
-          const offset = (i - 5) * 1000;
-          return { type: 'middle', start: Math.max(0, center + offset), length: 15000 };
-        }),
-      ];
-
-      for (const strat of strategies) {
-        try {
-          let subset;
-          if (strat.type === 'reverse') {
-            subset = signatureHex.substring(strat.start);
-          } else {
-            const end = Math.min(signatureHex.length, strat.start + strat.length);
-            subset = signatureHex.substring(strat.start, end);
-          }
-
-          if (subset.length > 1000) {
-            const r = parseDirectly(subset);
-            if (r && r.certificates && r.certificates.length > 0) {
-              console.log(`${strat.type} parsing succeeded`);
-              return r;
-            }
-          }
-        } catch {}
-      }
-      return null;
-    },
-
-    // Strategy 9: Segment and overlap parsing
-    () => {
-      console.log('Strategy 9: Segment and overlap parsing');
-      const segmentSize = 8000;
-      const overlap = 2000;
-      const segments = Math.ceil(signatureHex.length / (segmentSize - overlap));
-
-      for (let i = 0; i < segments; i++) {
-        const start = i * (segmentSize - overlap);
-        const end = Math.min(start + segmentSize, signatureHex.length);
-        const segment = signatureHex.substring(start, end);
-
-        if (segment.length > 1000) {
-          try {
-            const r = parseDirectly(segment);
-            if (r && r.certificates && r.certificates.length > 0) {
-              console.log(`Segment parsing succeeded at segment ${i}`);
-              return r;
-            }
-          } catch {}
-        }
-      }
-      return null;
-    },
-
-    // Strategy 10: Hex validation and comprehensive repair
-    () => {
-      console.log('Strategy 10: Comprehensive hex repair');
-      let cleanHex = signatureHex.length % 2 === 0 ? signatureHex : signatureHex.substring(0, signatureHex.length - 1);
-
-      const repairs = [
-        cleanHex,
-        '00' + cleanHex,
-        cleanHex + '00',
-        '30' + cleanHex,  // Ensure ASN.1 SEQUENCE start
-        cleanHex.replace(/^ff+/i, ''),
-        cleanHex.replace(/ff+$/i, ''),
-        cleanHex.replace(/^(0{2,})/g, '00'),  // Normalize leading zeros
-        cleanHex.replace(/(0{4,})/g, '0000'), // Normalize embedded zeros
-        cleanHex.replace(/([^0-9a-fA-F])/gi, ''), // Remove non-hex
-      ];
-
-      for (const repaired of repairs) {
-        if (repaired.length >= 1000) {
-          try {
-            const r = parseDirectly(repaired);
-            if (r && r.certificates && r.certificates.length > 0) {
-              console.log('Comprehensive hex repair succeeded');
-              return r;
-            }
-          } catch {}
-        }
-      }
-      return null;
-    },
-
-    // Strategy 11: Pattern-based reconstruction (new)
-    () => {
-      console.log('Strategy 11: Pattern-based reconstruction');
-      // Look for certificate patterns and reconstruct around them
-      const certStart = signatureHex.toLowerCase().indexOf('308');
-      if (certStart >= 0) {
-        const attempts = [
-          signatureHex.substring(certStart),
-          signatureHex.substring(certStart, certStart + 10000),
-          signatureHex.substring(Math.max(0, certStart - 500)),
-        ];
-
-        for (const attempt of attempts) {
-          if (attempt.length > 1000) {
-            try {
-              const r = parseDirectly(attempt);
-              if (r && r.certificates && r.certificates.length > 0) {
-                console.log('Pattern reconstruction succeeded');
-                return r;
-              }
-            } catch {}
-          }
-        }
+      if (bestResult) {
+        console.log(`DER-aware binary search succeeded after ${iterations} iterations`);
+        return bestResult;
       }
       return null;
     }
   ];
 
-  console.log(`Trying ${strategies.length} ultimate parsing strategies for signature of length ${signatureHex.length}`);
+  console.log(`Trying ${strategies.length} DER-aware parsing strategies for signature of length ${signatureHex.length}`);
 
   for (let i = 0; i < strategies.length; i++) {
     try { 
       const r = strategies[i](); 
       if (r && r.certificates && r.certificates.length > 0) {
-        console.log(`\n*** SUCCESS: Strategy ${i + 1} found ${r.certificates.length} certificates! ***`);
+        console.log(`\n*** SUCCESS: DER Strategy ${i + 1} found ${r.certificates.length} certificates! ***`);
 
-        // Log certificate details
         r.certificates.forEach((cert, idx) => {
           try {
             const cn = cert.subject.attributes.find(a => a.shortName === 'CN')?.value || 'Unknown';
@@ -884,11 +644,11 @@ function tryParseSignature(signatureHex) {
         return r; 
       }
     } catch (e) {
-      console.log(`Strategy ${i + 1} failed: ${e.message}`);
+      console.log(`DER Strategy ${i + 1} failed: ${e.message}`);
     }
   }
 
-  console.log('\n*** ALL PARSING STRATEGIES EXHAUSTED ***');
+  console.log('\n*** ALL DER-AWARE PARSING STRATEGIES EXHAUSTED ***');
   return null;
 }
 
@@ -1535,13 +1295,13 @@ async function performCRLCheck(cert, crlUrl) {
 
 async function extractSignatureInfo(signatureHex, pdfBuffer, byteRange) {
   try {
-    console.log(`\n=== ATTEMPTING TO EXTRACT SIGNATURE INFO ===`);
+    console.log(`\n=== DER-AWARE SIGNATURE EXTRACTION ===`);
     console.log(`Hex length: ${signatureHex.length}, ByteRange: ${byteRange ? '[' + byteRange.join(', ') + ']' : 'null'}`);
 
     const p7 = tryParseSignature(signatureHex);
     if (!p7 || !p7.certificates || p7.certificates.length === 0) return null;
 
-    console.log(`*** SUCCESS: PKCS#7 parsed with ${p7.certificates.length} certificates ***`);
+    console.log(`*** DER SUCCESS: PKCS#7 parsed with ${p7.certificates.length} certificates ***`);
 
     const chainValidation = buildAndValidateCertificateChain(p7.certificates);
     const cert = chainValidation.endEntity || p7.certificates[0];
@@ -1648,7 +1408,7 @@ exports.handler = async (event) => {
     if (!pdfString.startsWith('%PDF-')) return { statusCode: 400, headers, body: JSON.stringify({ error: 'Not a valid PDF file', valid: false }) };
 
     console.log(`\n${'='.repeat(80)}`);
-    console.log(`PROCESSING: ${fileName} (${buffer.length} bytes)`);
+    console.log(`DER-AWARE PROCESSING: ${fileName} (${buffer.length} bytes)`);
     console.log('='.repeat(80));
 
     const signatures = findAllSignatures(buffer);
@@ -1665,12 +1425,12 @@ exports.handler = async (event) => {
       };
     }
 
-    console.log(`\n*** FOUND ${signatures.length} POTENTIAL SIGNATURES ***`);
+    console.log(`\n*** FOUND ${signatures.length} POTENTIAL SIGNATURES FOR DER PROCESSING ***`);
     let sigInfo = null, workingSig = null, parseAttempts = [];
 
     for (let i = 0; i < signatures.length; i++) {
       const sig = signatures[i];
-      console.log(`\n--- PARSING ATTEMPT ${i + 1}/${signatures.length} ---`);
+      console.log(`\n--- DER-AWARE PARSING ATTEMPT ${i + 1}/${signatures.length} ---`);
       console.log(`Method: ${sig.method}, Confidence: ${sig.confidence}, Length: ${sig.signatureHex.length}`);
       console.log(`PKCS#7 potential: ${isPotentialPKCS7Signature(sig.signatureHex)}`);
 
@@ -1678,17 +1438,17 @@ exports.handler = async (event) => {
       if (info) { 
         sigInfo = info; 
         workingSig = sig; 
-        console.log(`\n*** ULTIMATE SUCCESS: Certificate extraction completed! ***`);
+        console.log(`\n*** DER SUCCESS: Certificate extraction completed! ***`);
         console.log(`Signer: ${info.signedBy}, Organization: ${info.organization}`);
         break; 
       } else { 
         parseAttempts.push(sig.method);
-        console.log('Parse attempt failed, trying next signature...');
+        console.log('DER parse attempt failed, trying next signature...');
       }
     }
 
     if (!sigInfo) {
-      console.log('\n*** ALL ULTIMATE PARSING ATTEMPTS FAILED ***');
+      console.log('\n*** ALL DER-AWARE PARSING ATTEMPTS FAILED ***');
       return {
         statusCode: 200, headers,
         body: JSON.stringify({
@@ -1697,18 +1457,18 @@ exports.handler = async (event) => {
           fileName,
           structureValid: true, 
           cryptographicVerification: false, 
-          error: 'Ultimate signature parsing failed',
+          error: 'DER-aware signature parsing failed',
           warnings: [
             `Found ${signatures.length} signature structure(s)`, 
-            'Exhausted all advanced parsing strategies', 
-            'Signature format may be unsupported or corrupted'
+            'Exhausted all DER-aware parsing strategies', 
+            'Signature may have structural issues or use unsupported encoding'
           ],
           troubleshooting: [
             'Use Adobe Acrobat Reader for full verification', 
-            'Contact document signer for technical details', 
-            'Signature may use proprietary or experimental format',
+            'Signature may contain malformed DER structures', 
+            'Try regenerating the signature with standard tools',
             `Attempted methods: ${parseAttempts.slice(0, 5).join(', ')}${parseAttempts.length > 5 ? '...' : ''}`,
-            'Consider professional signature analysis tools'
+            'Consider signature validation with ASN.1 analysis tools'
           ],
           processingTime: Date.now() - startTime
         })
@@ -1794,7 +1554,7 @@ exports.handler = async (event) => {
     }
 
     console.log(`\n${'='.repeat(80)}`);
-    console.log(`ULTIMATE VERIFICATION COMPLETE FOR: ${sigInfo.signedBy}`);
+    console.log(`DER-AWARE VERIFICATION COMPLETE FOR: ${sigInfo.signedBy}`);
     console.log(`Valid: ${result.valid}, Signature: ${result.signatureValid}, Chain: ${result.chainValid}`);
     console.log(`Revocation checked: ${result.revocationChecked}, Method: ${workingSig.method}`);
     console.log('='.repeat(80));
