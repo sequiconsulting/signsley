@@ -1,4 +1,4 @@
-// Signsley - Enhanced Version with File Integrity and Improved Status Display
+// Signsley - Enhanced Version with File Integrity, Multiple Signatures Sections, and Improved Status Display
 
 const uploadSection = document.getElementById('uploadSection');
 const fileInput = document.getElementById('fileInput');
@@ -158,19 +158,14 @@ async function sendVerificationRequest(endpoint, base64Data, fileName) {
     }
 }
 
-// ENHANCED: Determine file integrity status
+// Determine file integrity status
 function determineFileIntegrity(result) {
-    // Check if document has been modified after signing
     if (result.documentIntact !== undefined) {
         return result.documentIntact;
     }
-    
-    // Fallback logic based on signature validation
     if (result.signatureValid === true && result.structureValid === true) {
-        return true; // Likely intact if signature and structure are valid
+        return true;
     }
-    
-    // Check for modification indicators in warnings
     if (result.warnings) {
         const modificationWarnings = result.warnings.some(w => 
             w.toLowerCase().includes('modified') || 
@@ -180,29 +175,120 @@ function determineFileIntegrity(result) {
         );
         if (modificationWarnings) return false;
     }
-    
-    // If we can't determine, return null (unknown)
     return null;
 }
 
-// ENHANCED: Extract multiple signature information
-function extractMultipleSignatureInfo(result) {
-    let count = 1; // Default to 1 signature
-    
-    if (result.warnings) {
-        for (const warning of result.warnings) {
-            const match = warning.match(/Multiple signatures detected \((\d+)\)/i);
-            if (match) {
-                count = parseInt(match[1]);
-                break;
-            }
-        }
+// Multiple signatures
+function getSignaturesArray(result) {
+    if (Array.isArray(result.signatures) && result.signatures.length > 0) {
+        return result.signatures;
     }
-    
-    return { count: count };
+    const fallback = {
+        signatureValid: result.signatureValid,
+        structureValid: result.structureValid,
+        certificateValid: result.certificateValid,
+        chainValid: result.chainValid,
+        chainValidationPerformed: result.chainValidationPerformed,
+        revocationChecked: result.revocationChecked,
+        revoked: result.revoked,
+        signedBy: result.signedBy,
+        organization: result.organization,
+        email: result.email,
+        signingTime: result.signatureDate || result.signingTime,
+        signatureAlgorithm: result.signatureAlgorithm,
+        certificateIssuer: result.certificateIssuer,
+        certificateValidFrom: result.certificateValidFrom,
+        certificateValidTo: result.certificateValidTo,
+        serialNumber: result.serialNumber,
+        isSelfSigned: result.isSelfSigned
+    };
+    const anyValue = Object.values(fallback).some(v => v !== undefined && v !== null && v !== 'Unknown');
+    return anyValue ? [fallback] : [];
 }
 
-// ENHANCED: Improved signature status determination with multiple signature support
+function chip(text, color) {
+  return `<span style="display:inline-block;padding:2px 8px;border-radius:12px;background:${color}15;color:${color};font-size:0.75rem;font-weight:600;margin-right:6px;">${text}</span>`;
+}
+
+function yesNo(val) {
+  if (val === true) return '✅ Yes';
+  if (val === false) return '❌ No';
+  return '⚠️ Unknown';
+}
+
+function renderSignatureCards(signatures) {
+  if (!Array.isArray(signatures) || signatures.length === 0) return '';
+
+  return signatures.map((sig, idx) => {
+    const title = `Signature #${idx + 1}`;
+    const ok = sig.signatureValid === true && sig.certificateValid !== false && sig.chainValid !== false && sig.revoked !== true;
+    const barColor = ok ? '#2c5f2d' : (sig.signatureValid === false ? '#c62828' : '#f57c00');
+
+    let statusChips = '';
+    statusChips += chip(sig.signatureValid === true ? 'Signature: Valid' : (sig.signatureValid === false ? 'Signature: Invalid' : 'Signature: Unknown'), sig.signatureValid === true ? '#2c5f2d' : (sig.signatureValid === false ? '#c62828' : '#f57c00'));
+    if (sig.structureValid !== undefined) statusChips += chip(sig.structureValid ? 'Structure: OK' : 'Structure: Bad', sig.structureValid ? '#2c5f2d' : '#c62828');
+
+    let certChipColor = '#2c5f2d';
+    let certChipText = 'Certificate: Valid';
+    const certExpired = (sig.certificateValidTo && new Date(sig.certificateValidTo) < new Date());
+    if (sig.certificateValid === false && certExpired) {
+      certChipText = 'Certificate: Invalid & Expired';
+      certChipColor = '#c62828';
+    } else if (sig.certificateValid === true && certExpired) {
+      certChipText = 'Certificate: Valid but Expired';
+      certChipColor = '#f57c00';
+    } else if (sig.certificateValid === false) {
+      certChipText = 'Certificate: Invalid';
+      certChipColor = '#c62828';
+    } else if (certExpired) {
+      certChipText = 'Certificate: Expired';
+      certChipColor = '#f57c00';
+    }
+    statusChips += chip(certChipText, certChipColor);
+
+    if (sig.chainValidationPerformed !== undefined) {
+      statusChips += chip(sig.chainValid ? 'Chain: OK' : 'Chain: Issues', sig.chainValid ? '#2c5f2d' : '#f57c00');
+    }
+    if (sig.revocationChecked !== undefined) {
+      if (sig.revocationChecked && sig.revoked === true) {
+        statusChips += chip('Revocation: Revoked', '#c62828');
+      } else if (sig.revocationChecked && sig.revoked === false) {
+        statusChips += chip('Revocation: Not Revoked', '#2c5f2d');
+      } else {
+        statusChips += chip('Revocation: Not Checked', '#f57c00');
+      }
+    }
+
+    const gridRow = (label, value) => {
+      if (!value && value !== 0) return '';
+      return `<div style="display:grid;grid-template-columns:130px 1fr;gap:0.5rem;padding:0.25rem 0;border-bottom:1px solid var(--border);line-height:1.4;">
+        <div style="font-weight:500;color:var(--text-secondary);">${esc(label)}:</div>
+        <div style="color:var(--text);word-break:break-word;">${esc(String(value))}</div>
+      </div>`;
+    };
+
+    const section =
+      `<div style="margin-bottom:1rem;padding:0.9rem;background:var(--bg-secondary);border-radius:10px;border-left:4px solid ${barColor};">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
+          <div style="font-weight:700;color:${barColor};">${esc(title)}</div>
+        </div>
+        <div style="margin-bottom:0.5rem;">${statusChips}</div>
+        ${gridRow('Signed By', sig.signedBy)}
+        ${gridRow('Organization', sig.organization)}
+        ${gridRow('Email', sig.email)}
+        ${gridRow('Signing Time', sig.signingTime)}
+        ${gridRow('Algorithm', sig.signatureAlgorithm)}
+        ${gridRow('Issuer', sig.certificateIssuer)}
+        ${gridRow('Valid From', sig.certificateValidFrom)}
+        ${gridRow('Valid To', sig.certificateValidTo)}
+        ${gridRow('Serial', sig.serialNumber)}
+        ${sig.isSelfSigned !== undefined ? gridRow('Self-Signed', yesNo(sig.isSelfSigned)) : ''}
+      </div>`;
+
+    return section;
+  }).join('');
+}
+
 function determineSignatureStatusEnhanced(result) {
     const multipleSignatures = extractMultipleSignatureInfo(result);
     const hasMultipleSignatures = multipleSignatures.count > 1;
@@ -218,7 +304,6 @@ function determineSignatureStatusEnhanced(result) {
     const sigValid = result.signatureValid;
     const certExpired = result.certificateExpired || (result.certificateValidTo && new Date(result.certificateValidTo) < new Date());
 
-    // Enhanced status determination considering multiple signatures as positive
     if (result.valid && sigValid && certValid && chainValid && revocationOk && !certExpired) {
         const baseTitle = hasMultipleSignatures ? 'Multiple Signatures Verified Successfully' : 'Signature Verified Successfully';
         return {
@@ -298,30 +383,42 @@ function determineSignatureStatusEnhanced(result) {
     }
 }
 
-// ENHANCED: Better multiple signature handling
+function extractMultipleSignatureInfo(result) {
+    let count = 1;
+    if (result.warnings) {
+        for (const warning of result.warnings) {
+            const match = warning.match(/Multiple signatures detected \((\d+)\)/i);
+            if (match) {
+                count = parseInt(match[1]);
+                break;
+            }
+        }
+    }
+    if (Array.isArray(result.signatures)) {
+        count = Math.max(count, result.signatures.length);
+    }
+    return { count };
+}
+
+// Result display
 function displayResults(result) {
     if (!result) {
         showError('Invalid result');
         return;
     }
 
-    // Determine file integrity status
     const integrityStatus = determineFileIntegrity(result);
-    
-    // Enhanced signature status determination with multiple signature support
     const signatureStatus = determineSignatureStatusEnhanced(result);
 
-    // Set main result display
     resultIcon.textContent = signatureStatus.icon;
     resultIcon.className = 'result-icon ' + signatureStatus.class;
     resultTitle.textContent = signatureStatus.title;
 
     let html = '';
 
-    // File Integrity Header Section
+    // File Integrity
     html += '<div class="integrity-section" style="margin-bottom: 1.5rem; padding: 1rem; background: var(--bg-secondary); border-radius: 8px; border-left: 4px solid ' + getIntegrityColor(integrityStatus) + ';">';
     html += '<div style="font-size: 0.875rem; font-weight: 600; color: var(--text); margin-bottom: 0.5rem;">🛡️ File Integrity Status</div>';
-    
     if (integrityStatus === true) {
         html += '<div style="color: #2c5f2d; font-weight: 500;">✅ Document Intact</div>';
         html += '<div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.25rem;">The file has not been modified after signing</div>';
@@ -334,7 +431,7 @@ function displayResults(result) {
     }
     html += '</div>';
 
-    // ENHANCED: Multiple Signature Detection Section
+    // Multiple signature summary
     const multipleSignatures = extractMultipleSignatureInfo(result);
     if (multipleSignatures.count > 1) {
         html += '<div class="signature-info-section" style="margin-bottom: 1.5rem; padding: 1rem; background: var(--bg-secondary); border-radius: 8px; border-left: 4px solid #2c5f2d;">';
@@ -344,15 +441,13 @@ function displayResults(result) {
         html += '</div>';
     }
 
-    // Signature Status Description
-    if (signatureStatus.description) {
-        html += '<div class="status-description" style="margin-bottom: 1rem; padding: 0.75rem; background: var(--bg-light); border-radius: 6px; font-size: 0.875rem; color: var(--text-secondary);">';
-        html += signatureStatus.description;
-        html += '</div>';
+    // Per-signature cards
+    const signatures = getSignaturesArray(result);
+    if (signatures.length > 0) {
+        html += renderSignatureCards(signatures);
     }
 
     if (result.error) {
-        const errorClass = !result.cryptographicVerification ? 'info' : 'warning';
         html += row('Status', esc(result.error), !result.cryptographicVerification ? '#2196f3' : '#f57c00');
     }
 
@@ -369,163 +464,54 @@ function displayResults(result) {
         html += row('Verification', status, color);
     }
 
-    // Enhanced signature display
-    if (result.signatureValid !== null && result.signatureValid !== undefined) {
-        let sigStatus, sigColor;
-        const certExpired = result.certificateExpired || (result.certificateValidTo && new Date(result.certificateValidTo) < new Date());
-        
-        if (result.signatureValid === true) {
-            if (certExpired) {
-                sigStatus = '⏰ Valid (Certificate Expired)';
-                sigColor = '#f57c00';
-            } else {
-                sigStatus = '✅ Valid';
-                sigColor = '#2c5f2d';
-            }
-        } else {
-            if (result.signedBy && result.signedBy.includes('YOUSIGN') && 
-                result.structureValid && result.certificateValid) {
-                sigStatus = '✅ Valid (Structure Verified)';
-                sigColor = '#2c5f2d';
-            } else {
-                sigStatus = '❌ Invalid';
-                sigColor = '#c62828';
-            }
-        }
-        html += row('Signature', sigStatus, sigColor);
-    }
-
     if (result.structureValid !== undefined) {
-        html += row('Structure', result.structureValid ? '✅ Valid' : '❌ Invalid',
-                    result.structureValid ? '#2c5f2d' : '#c62828');
+        html += row('Structure', result.structureValid ? '✅ Valid' : '❌ Invalid', result.structureValid ? '#2c5f2d' : '#c62828');
     }
 
-    // Enhanced certificate status with expiration details
     if (result.certificateValid !== undefined) {
         const certExpired = result.certificateExpired || (result.certificateValidTo && new Date(result.certificateValidTo) < new Date());
         let certStatus, certColor;
-        
-        if (result.certificateValid && !certExpired) {
-            certStatus = '✅ Valid';
-            certColor = '#2c5f2d';
-        } else if (result.certificateValid && certExpired) {
-            certStatus = '⏰ Valid but Expired';
-            certColor = '#f57c00';
-        } else if (!result.certificateValid && certExpired) {
-            certStatus = '❌ Invalid & Expired';
-            certColor = '#c62828';
-        } else {
-            certStatus = '❌ Invalid';
-            certColor = '#c62828';
-        }
-        
+        if (result.certificateValid && !certExpired) { certStatus = '✅ Valid'; certColor = '#2c5f2d'; }
+        else if (result.certificateValid && certExpired) { certStatus = '⏰ Valid but Expired'; certColor = '#f57c00'; }
+        else if (!result.certificateValid && certExpired) { certStatus = '❌ Invalid & Expired'; certColor = '#c62828'; }
+        else { certStatus = '❌ Invalid'; certColor = '#c62828'; }
         html += row('Certificate', certStatus, certColor);
     }
 
     if (result.chainValidationPerformed !== undefined) {
-        html += row('Chain Validation', result.chainValid ? '✅ Valid Chain' : '⚠️ Chain Issues',
-                    result.chainValid ? '#2c5f2d' : '#f57c00');
+        html += row('Chain Validation', result.chainValid ? '✅ Valid Chain' : '⚠️ Chain Issues', result.chainValid ? '#2c5f2d' : '#f57c00');
     }
 
     if (result.revocationChecked !== undefined) {
         let revocationStatus, revocationColor;
         if (result.revocationChecked) {
-            if (result.revoked) {
-                revocationStatus = '🚫 Certificate Revoked';
-                revocationColor = '#c62828';
-            } else {
-                revocationStatus = '✅ Not Revoked';
-                revocationColor = '#2c5f2d';
-            }
-        } else {
-            revocationStatus = '⚠️ Not Checked';
-            revocationColor = '#f57c00';
-        }
+            if (result.revoked) { revocationStatus = '🚫 Certificate Revoked'; revocationColor = '#c62828'; }
+            else { revocationStatus = '✅ Not Revoked'; revocationColor = '#2c5f2d'; }
+        } else { revocationStatus = '⚠️ Not Checked'; revocationColor = '#f57c00'; }
         html += row('Revocation Status', revocationStatus, revocationColor);
     }
 
-    add('Signed By', result.signedBy);
-    add('Organization', result.organization);
-    add('Email', result.email);
-    add('Signature Date', result.signatureDate || result.signingTime);
-    add('Algorithm', result.signatureAlgorithm);
-    add('Issuer', result.certificateIssuer);
-    add('Valid From', result.certificateValidFrom);
-    add('Valid To', result.certificateValidTo);
-    add('Serial', result.serialNumber);
-
-    if (result.certificateChainLength) {
-        html += row('Chain Length', `${result.certificateChainLength} certificate(s)`);
-    }
-
-    if (result.isSelfSigned !== undefined) {
-        const selfSignedColor = result.isSelfSigned ? '#f57c00' : '#2c5f2d';
-        const selfSignedStatus = result.isSelfSigned ? '⚠️ Yes' : '✅ No';
-        html += row('Self-Signed', selfSignedStatus, selfSignedColor);
-    }
-
-    if (result.detectionMethod) {
-        html += row('Detection Method', result.detectionMethod);
-    }
+    add('Detection Method', result.detectionMethod);
 
     add('Details', result.details);
 
-    // ENHANCED: Filter out multiple signature "warnings" and handle them as positive information
-    if (result.warnings && result.warnings.length > 0) {
-        const filteredWarnings = result.warnings.filter(w => {
-            // Don't show multiple signature detection as warning
-            if (w.toLowerCase().includes('multiple signatures detected')) {
-                return false; // This is handled in the dedicated section above
-            }
-            return true;
-        });
-
-        if (filteredWarnings.length > 0) {
-            const categorizedWarnings = filteredWarnings.map(w => {
-                if (w.toLowerCase().includes('revoked') || w.toLowerCase().includes('invalid')) {
-                    return `🚫 ${esc(w)}`;
-                } else if (w.toLowerCase().includes('expired')) {
-                    return `⏰ ${esc(w)}`;
-                } else if (w.toLowerCase().includes('modified') || w.toLowerCase().includes('altered')) {
-                    return `🔴 ${esc(w)}`;
-                } else if (w.includes('Structure-only verification') && 
-                           result.signedBy && result.signedBy.includes('YOUSIGN') && 
-                           result.certificateValid && result.chainValid) {
-                    return `ℹ️ ${esc(w)}`;
-                } else {
-                    const isError = w.toLowerCase().includes('failed');
-                    const icon = isError ? '🚫' : '⚠️';
-                    return `${icon} ${esc(w)}`;
-                }
-            }).join('<br>');
-
-            html += row('Warnings', categorizedWarnings, '#f57c00');
-        }
-    }
-
     if (result.troubleshooting && result.troubleshooting.length > 0) {
-        const troubleshootingHtml = result.troubleshooting.map(t => {
-            return `💡 ${esc(t)}`;
-        }).join('<br>');
+        const troubleshootingHtml = result.troubleshooting.map(t => `💡 ${esc(t)}`).join('<br>');
         html += row('Recommendations', troubleshootingHtml, '#2196f3');
     }
 
-    // Certificate Chain Details
     if (result.certificateChain && result.certificateChain.length > 0) {
         html += '<div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 2px solid var(--border);"></div>';
         html += '<div style="font-size: 0.875rem; font-weight: 600; color: var(--text); margin-bottom: 0.75rem;">🔗 Certificate Chain Details</div>';
-
-        result.certificateChain.forEach((cert, idx) => {
+        result.certificateChain.forEach((cert) => {
             const roleData = {
                 'root-ca': { icon: '🏛️', label: 'Root CA', color: '#4caf50' },
                 'intermediate-ca': { icon: '🔗', label: 'Intermediate CA', color: '#2196f3' },
                 'end-entity': { icon: '📄', label: 'End Entity', color: '#ff9800' }
             };
-
             const role = roleData[cert.role] || { icon: '📄', label: 'Certificate', color: '#757575' };
-
             html += '<div style="margin-bottom: 1rem; padding: 0.75rem; background: var(--bg-secondary); border-radius: 8px; font-size: 0.8125rem; border-left: 4px solid ' + role.color + ';">';
-            html += `<div style="font-weight: 600; color: ${role.color}; margin-bottom: 0.5rem;">${role.icon} ${role.label} #${cert.position}</div>`;
+            html += `<div style=\"font-weight: 600; color: ${role.color}; margin-bottom: 0.5rem;\">${role.icon} ${role.label} #${cert.position}</div>`;
             html += certRow('Subject', cert.subject);
             html += certRow('Issuer', cert.issuer);
             html += certRow('Serial', cert.serialNumber);
@@ -533,22 +519,21 @@ function displayResults(result) {
             html += certRow('Valid To', cert.validTo);
             html += certRow('Key Algorithm', cert.publicKeyAlgorithm);
             html += certRow('Key Size', cert.keySize + ' bits');
-
             const selfSignedColor = cert.isSelfSigned ? '#f57c00' : '#2c5f2d';
             const selfSignedIcon = cert.isSelfSigned ? '⚠️' : '✅';
-            html += `<div style="display: grid; grid-template-columns: 100px 1fr; gap: 0.5rem; padding: 0.25rem 0; border-bottom: 1px solid var(--border); line-height: 1.4;">
-                <div style="font-weight: 500; color: var(--text-secondary);">Self-Signed:</div>
-                <div style="color: ${selfSignedColor}; word-break: break-word;">${selfSignedIcon} ${cert.isSelfSigned ? 'Yes' : 'No'}</div>
-            </div>`;
+            html += `<div style=\"display: grid; grid-template-columns: 100px 1fr; gap: 0.5rem; padding: 0.25rem 0; border-bottom: 1px solid var(--border); line-height: 1.4;\">`+
+                    `<div style=\"font-weight: 500; color: var(--text-secondary);\">Self-Signed:</div>`+
+                    `<div style=\"color: ${selfSignedColor}; word-break: break-word;\">${selfSignedIcon} ${cert.isSelfSigned ? 'Yes' : 'No'}</div>`+
+                    `</div>`;
             html += '</div>';
         });
     }
 
     function certRow(label, value) {
-        return `<div style="display: grid; grid-template-columns: 100px 1fr; gap: 0.5rem; padding: 0.25rem 0; border-bottom: 1px solid var(--border); line-height: 1.4;">
-            <div style="font-weight: 500; color: var(--text-secondary);">${esc(label)}:</div>
-            <div style="color: var(--text); word-break: break-word; font-family: monospace; font-size: 0.9em;">${esc(value)}</div>
-        </div>`;
+        return `<div style="display: grid; grid-template-columns: 100px 1fr; gap: 0.5rem; padding: 0.25rem 0; border-bottom: 1px solid var(--border); line-height: 1.4;">`+
+               `<div style="font-weight: 500; color: var(--text-secondary);">${esc(label)}:</div>`+
+               `<div style="color: var(--text); word-break: break-word; font-family: monospace; font-size: 0.9em;">${esc(value)}</div>`+
+               `</div>`;
     }
 
     function add(label, value) {
@@ -561,7 +546,6 @@ function displayResults(result) {
     results.classList.add('show');
 }
 
-// ENHANCED: Helper function for integrity color coding
 function getIntegrityColor(integrityStatus) {
     if (integrityStatus === true) return '#2c5f2d';
     if (integrityStatus === false) return '#c62828';
@@ -656,5 +640,5 @@ document.addEventListener('drop', (e) => {
 });
 
 console.log('Signsley Digital Signature Verification Tool - Enhanced Version Loaded');
-console.log('Version: 3.0 - Enhanced File Integrity & Signature Status');
+console.log('Version: 3.1 - Per-signature sections');
 console.log('Supported file types:', CONFIG.SUPPORTED_EXTENSIONS.join(', '));
