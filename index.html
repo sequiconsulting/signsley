@@ -85,7 +85,7 @@
     function routeToApp(file){
       try{
         if(window.handleFile){ window.handleFile(file); return; }
-      }catch(_){}
+      }catch(_){/* noop */}
       // Fallback: dispatch change event so app.js listener runs
       const dt = new DataTransfer(); dt.items.add(file); input.files = dt.files;
       input.dispatchEvent(new Event('change', {bubbles:true}));
@@ -98,10 +98,16 @@
     });
 
     // Button opens picker
-    button.addEventListener('click', (e)=>{ e.preventDefault(); e.stopPropagation(); input.click(); });
+    button.addEventListener('click', (e)=>{ e.preventDefault(); e.stopPropagation(); input.value = ''; input.click(); });
 
-    // Native input change -> app pipeline
+    // Native input change -> app pipeline (ensure fires even if same file chosen again)
     input.addEventListener('change', (e)=>{
+      const f = e.target && e.target.files && e.target.files[0];
+      if(f) routeToApp(f);
+    });
+
+    // Also handle 'input' event for browsers that fire it instead of 'change' in some cases
+    input.addEventListener('input', (e)=>{
       const f = e.target && e.target.files && e.target.files[0];
       if(f) routeToApp(f);
     });
@@ -128,11 +134,7 @@
       const panel = document.getElementById(targetId);
       if(panel){ 
         panel.classList.toggle('show');
-        if(panel.classList.contains('show')){
-          panel.style.display = 'block';
-        } else {
-          panel.style.display = 'none';
-        }
+        panel.style.display = panel.classList.contains('show') ? 'block' : 'none';
       }
     });
   </script>
