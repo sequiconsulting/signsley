@@ -1,4 +1,4 @@
-// Signsley - Corrected Version with Enhanced Error Handling and Status Display
+// Signsley - Enhanced Version with File Integrity and Improved Status Display
 
 const uploadSection = document.getElementById('uploadSection');
 const fileInput = document.getElementById('fileInput');
@@ -158,55 +158,156 @@ async function sendVerificationRequest(endpoint, base64Data, fileName) {
     }
 }
 
-// CORRECTED: Better result display logic that handles YOUSIGN structure-only verification
-function displayResults(result) {
-    if (!result) {
-        showError('Invalid result');
-        return;
+// ENHANCED: Determine file integrity status
+function determineFileIntegrity(result) {
+    // Check if document has been modified after signing
+    if (result.documentIntact !== undefined) {
+        return result.documentIntact;
     }
+    
+    // Fallback logic based on signature validation
+    if (result.signatureValid === true && result.structureValid === true) {
+        return true; // Likely intact if signature and structure are valid
+    }
+    
+    // Check for modification indicators in warnings
+    if (result.warnings) {
+        const modificationWarnings = result.warnings.some(w => 
+            w.toLowerCase().includes('modified') || 
+            w.toLowerCase().includes('altered') ||
+            w.toLowerCase().includes('tampered') ||
+            w.toLowerCase().includes('hash mismatch')
+        );
+        if (modificationWarnings) return false;
+    }
+    
+    // If we can't determine, return null (unknown)
+    return null;
+}
 
+// ENHANCED: Determine detailed signature status
+function determineSignatureStatus(result) {
     const hasWarnings = result.warnings && result.warnings.length > 0;
     const isStructureOnly = !result.cryptographicVerification;
     const chainValid = result.chainValid;
     const revocationOk = !result.revoked;
     const certValid = result.certificateValid;
     const sigValid = result.signatureValid;
+    const certExpired = result.certificateExpired || (result.certificateValidTo && new Date(result.certificateValidTo) < new Date());
 
-    // CORRECTED: Enhanced status determination for YOUSIGN signatures
-    let statusIcon, statusClass, statusTitle;
-
-    if (result.valid && sigValid && certValid && chainValid && revocationOk) {
-        statusIcon = hasWarnings ? '⚠️' : '✅';
-        statusClass = hasWarnings ? 'warning' : 'valid';
-        statusTitle = hasWarnings ? 'Valid Signature (with warnings)' : 'Signature Verified Successfully';
+    // Comprehensive status determination
+    if (result.valid && sigValid && certValid && chainValid && revocationOk && !certExpired) {
+        return {
+            icon: hasWarnings ? '⚠️' : '✅',
+            class: hasWarnings ? 'warning' : 'valid',
+            title: hasWarnings ? 'Valid Signature (with warnings)' : 'Signature Verified Successfully',
+            description: 'All signature components are valid and current'
+        };
+    } else if (sigValid && certValid && chainValid && !revocationOk) {
+        return {
+            icon: '🚫',
+            class: 'invalid',
+            title: 'Certificate Revoked',
+            description: 'Signature is valid but certificate has been revoked'
+        };
+    } else if (sigValid && chainValid && certExpired) {
+        return {
+            icon: '⏰',
+            class: 'expired',
+            title: 'Valid Signature - Certificate Expired',
+            description: 'Signature was valid when created but certificate has expired'
+        };
+    } else if (sigValid && certValid && chainValid && revocationOk) {
+        return {
+            icon: '✅',
+            class: 'valid',
+            title: 'Signature Verified Successfully',
+            description: 'All signature components are valid'
+        };
     } else if (result.structureValid && sigValid && certValid && chainValid) {
-        // YOUSIGN case: structure + cert + chain valid but maybe revocation issues
-        statusIcon = '✅';
-        statusClass = 'valid';
-        statusTitle = 'Signature Verified Successfully';
+        return {
+            icon: '✅',
+            class: 'valid',
+            title: 'Signature Verified Successfully',
+            description: 'Signature structure and certificates are valid'
+        };
     } else if (result.structureValid && isStructureOnly) {
-        statusIcon = '📋';
-        statusClass = 'info';
-        statusTitle = 'Signature Structure Valid';
+        return {
+            icon: '📋',
+            class: 'info',
+            title: 'Signature Structure Valid',
+            description: 'Document structure verified - cryptographic validation not performed'
+        };
     } else if (result.structureValid && !sigValid) {
-        statusIcon = '❌';
-        statusClass = 'invalid';  
-        statusTitle = 'Signature Issues Detected';
+        return {
+            icon: '❌',
+            class: 'invalid',
+            title: 'Invalid Signature',
+            description: 'Signature cryptographic validation failed'
+        };
+    } else if (!result.structureValid) {
+        return {
+            icon: '❌',
+            class: 'invalid',
+            title: 'Corrupted Signature Structure',
+            description: 'Signature structure is damaged or invalid'
+        };
     } else {
-        statusIcon = '❌';
-        statusClass = 'invalid';
-        statusTitle = 'No Valid Signature';
+        return {
+            icon: '❌',
+            class: 'invalid',
+            title: 'No Valid Signature',
+            description: 'No recognizable digital signature found'
+        };
+    }
+}
+
+// ENHANCED: Result display with file integrity and improved status
+function displayResults(result) {
+    if (!result) {
+        showError('Invalid result');
+        return;
     }
 
-    resultIcon.textContent = statusIcon;
-    resultIcon.className = 'result-icon ' + statusClass;
-    resultTitle.textContent = statusTitle;
+    // Determine file integrity status
+    const integrityStatus = determineFileIntegrity(result);
+    
+    // Determine signature status
+    const signatureStatus = determineSignatureStatus(result);
+
+    // Set main result display
+    resultIcon.textContent = signatureStatus.icon;
+    resultIcon.className = 'result-icon ' + signatureStatus.class;
+    resultTitle.textContent = signatureStatus.title;
 
     let html = '';
 
+    // ENHANCED: File Integrity Header Section
+    html += '<div class="integrity-section" style="margin-bottom: 1.5rem; padding: 1rem; background: var(--bg-secondary); border-radius: 8px; border-left: 4px solid ' + getIntegrityColor(integrityStatus) + ';">';
+    html += '<div style="font-size: 0.875rem; font-weight: 600; color: var(--text); margin-bottom: 0.5rem;">🛡️ File Integrity Status</div>';
+    
+    if (integrityStatus === true) {
+        html += '<div style="color: #2c5f2d; font-weight: 500;">✅ Document Intact</div>';
+        html += '<div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.25rem;">The file has not been modified after signing</div>';
+    } else if (integrityStatus === false) {
+        html += '<div style="color: #c62828; font-weight: 500;">❌ Document Modified</div>';
+        html += '<div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.25rem;">The file appears to have been altered after signing</div>';
+    } else {
+        html += '<div style="color: #f57c00; font-weight: 500;">⚠️ Integrity Unknown</div>';
+        html += '<div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.25rem;">Unable to determine if file was modified after signing</div>';
+    }
+    html += '</div>';
+
+    // Signature Status Description
+    if (signatureStatus.description) {
+        html += '<div class="status-description" style="margin-bottom: 1rem; padding: 0.75rem; background: var(--bg-light); border-radius: 6px; font-size: 0.875rem; color: var(--text-secondary);">';
+        html += signatureStatus.description;
+        html += '</div>';
+    }
+
     if (result.error) {
-        const errorClass = isStructureOnly ? 'info' : 'warning';
-        html += row('Status', esc(result.error), isStructureOnly ? '#2196f3' : '#f57c00');
+        const errorClass = !result.cryptographicVerification ? 'info' : 'warning';
+        html += row('Status', esc(result.error), !result.cryptographicVerification ? '#2196f3' : '#f57c00');
     }
 
     html += row('File', esc(result.fileName));
@@ -222,14 +323,20 @@ function displayResults(result) {
         html += row('Verification', status, color);
     }
 
-    // CORRECTED: Better signature status display
+    // ENHANCED: More detailed signature status display
     if (result.signatureValid !== null && result.signatureValid !== undefined) {
         let sigStatus, sigColor;
+        const certExpired = result.certificateExpired || (result.certificateValidTo && new Date(result.certificateValidTo) < new Date());
+        
         if (result.signatureValid === true) {
-            sigStatus = '✅ Valid';
-            sigColor = '#2c5f2d';
+            if (certExpired) {
+                sigStatus = '⏰ Valid (Certificate Expired)';
+                sigColor = '#f57c00';
+            } else {
+                sigStatus = '✅ Valid';
+                sigColor = '#2c5f2d';
+            }
         } else {
-            // Check if this is a YOUSIGN structure-only case
             if (result.signedBy && result.signedBy.includes('YOUSIGN') && 
                 result.structureValid && result.certificateValid) {
                 sigStatus = '✅ Valid (Structure Verified)';
@@ -247,9 +354,26 @@ function displayResults(result) {
                     result.structureValid ? '#2c5f2d' : '#c62828');
     }
 
+    // ENHANCED: Certificate status with expiration details
     if (result.certificateValid !== undefined) {
-        html += row('Certificate', result.certificateValid ? '✅ Valid' : '❌ Expired/Invalid',
-                    result.certificateValid ? '#2c5f2d' : '#c62828');
+        const certExpired = result.certificateExpired || (result.certificateValidTo && new Date(result.certificateValidTo) < new Date());
+        let certStatus, certColor;
+        
+        if (result.certificateValid && !certExpired) {
+            certStatus = '✅ Valid';
+            certColor = '#2c5f2d';
+        } else if (result.certificateValid && certExpired) {
+            certStatus = '⏰ Valid but Expired';
+            certColor = '#f57c00';
+        } else if (!result.certificateValid && certExpired) {
+            certStatus = '❌ Invalid & Expired';
+            certColor = '#c62828';
+        } else {
+            certStatus = '❌ Invalid';
+            certColor = '#c62828';
+        }
+        
+        html += row('Certificate', certStatus, certColor);
     }
 
     if (result.chainValidationPerformed !== undefined) {
@@ -257,12 +381,12 @@ function displayResults(result) {
                     result.chainValid ? '#2c5f2d' : '#f57c00');
     }
 
-    // CORRECTED: Better revocation status handling
+    // ENHANCED: Revocation status with more detail
     if (result.revocationChecked !== undefined) {
         let revocationStatus, revocationColor;
         if (result.revocationChecked) {
             if (result.revoked) {
-                revocationStatus = '❌ Certificate Revoked';
+                revocationStatus = '🚫 Certificate Revoked';
                 revocationColor = '#c62828';
             } else {
                 revocationStatus = '✅ Not Revoked';
@@ -301,21 +425,25 @@ function displayResults(result) {
 
     add('Details', result.details);
 
-    // CORRECTED: Enhanced warnings display with better categorization
+    // ENHANCED: Categorized warnings with better visual hierarchy
     if (result.warnings && result.warnings.length > 0) {
         const categorizedWarnings = result.warnings.map(w => {
-            // Don't show certain warnings as errors for valid YOUSIGN signatures
-            if (w.includes('Structure-only verification') && 
-                result.signedBy && result.signedBy.includes('YOUSIGN') && 
-                result.certificateValid && result.chainValid) {
-                return `ℹ️ ${w}`;
+            // Categorize warnings by severity
+            if (w.toLowerCase().includes('revoked') || w.toLowerCase().includes('invalid')) {
+                return `🚫 ${esc(w)}`;
+            } else if (w.toLowerCase().includes('expired')) {
+                return `⏰ ${esc(w)}`;
+            } else if (w.toLowerCase().includes('modified') || w.toLowerCase().includes('altered')) {
+                return `🔴 ${esc(w)}`;
+            } else if (w.includes('Structure-only verification') && 
+                       result.signedBy && result.signedBy.includes('YOUSIGN') && 
+                       result.certificateValid && result.chainValid) {
+                return `ℹ️ ${esc(w)}`;
+            } else {
+                const isError = w.toLowerCase().includes('failed');
+                const icon = isError ? '🚫' : '⚠️';
+                return `${icon} ${esc(w)}`;
             }
-
-            const isError = w.toLowerCase().includes('failed') || 
-                           w.toLowerCase().includes('invalid') || 
-                           w.toLowerCase().includes('revoked');
-            const icon = isError ? '🚫' : '⚠️';
-            return `${icon} ${esc(w)}`;
         }).join('<br>');
 
         html += row('Warnings', categorizedWarnings, '#f57c00');
@@ -328,7 +456,7 @@ function displayResults(result) {
         html += row('Recommendations', troubleshootingHtml, '#2196f3');
     }
 
-    // Certificate Chain Details
+    // Certificate Chain Details (unchanged)
     if (result.certificateChain && result.certificateChain.length > 0) {
         html += '<div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 2px solid var(--border);"></div>';
         html += '<div style="font-size: 0.875rem; font-weight: 600; color: var(--text); margin-bottom: 0.75rem;">🔗 Certificate Chain Details</div>';
@@ -377,6 +505,13 @@ function displayResults(result) {
 
     resultDetails.innerHTML = html;
     results.classList.add('show');
+}
+
+// ENHANCED: Helper function for integrity color coding
+function getIntegrityColor(integrityStatus) {
+    if (integrityStatus === true) return '#2c5f2d';
+    if (integrityStatus === false) return '#c62828';
+    return '#f57c00';
 }
 
 function row(label, value, color = null) {
@@ -466,6 +601,7 @@ document.addEventListener('drop', (e) => {
     document.body.classList.remove('drag-active');
 });
 
-console.log('Signsley Digital Signature Verification Tool - Corrected Version Loaded');
-console.log('Version: 2.0 - Enhanced YOUSIGN Support');
+console.log('Signsley Digital Signature Verification Tool - Enhanced Version Loaded');
+console.log('Version: 3.0 - Enhanced File Integrity & Signature Status');
 console.log('Supported file types:', CONFIG.SUPPORTED_EXTENSIONS.join(', '));
+
