@@ -1,15 +1,81 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Signsley</title>
+
+  <!-- New compact CSS for mobile -->
   <link rel="preload" as="style" href="styles/mobile-compact.css" />
   <link rel="stylesheet" href="styles/mobile-compact.css" data-mobile-compact="1" />
-  <!-- existing css links remain below -->
+
+  <!-- Existing app styles (add your real files here if they exist) -->
+  <link rel="stylesheet" href="styles/app.css" />
+  <link rel="stylesheet" href="styles/main.css" />
+  <style>
+    /* Minimal fallback styles in case main CSS isn’t present */
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin:0; padding:16px; background:#fafafa; color:#222; }
+    .upload { border:2px dashed #ccc; padding:20px; text-align:center; border-radius:8px; background:#fff; }
+    .upload.dragover { border-color:#1976d2; background:#f0f7ff; }
+    .loading { display:none; align-items:center; gap:10px; padding:12px; background:#fff3cd; border:1px solid #ffeeba; border-radius:6px; margin-top:12px; }
+    .loading.show { display:flex; }
+    .spinner { width:16px; height:16px; border:2px solid #999; border-top-color:transparent; border-radius:50%; animation:spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .results { display:none; margin-top:16px; background:#fff; border:1px solid #eee; border-radius:8px; padding:12px; }
+    .results.show { display:block; }
+    .result-header { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+    .result-icon { font-size:20px; }
+    .result-icon.valid { color:#2c5f2d; }
+    .result-icon.warning { color:#f57c00; }
+    .result-icon.invalid { color:#c62828; }
+    .detail-row { display:flex; align-items:center; gap:8px; padding:6px 0; }
+    .detail-label { flex:0 0 140px; color:#555; font-weight:500; line-height:1.2; }
+    .detail-value { flex:1; line-height:1.2; word-break:break-word; }
+    .error-message { display:none; padding:12px; border-radius:6px; margin-top:12px; }
+    .error-message.show { display:block; }
+    .error-message.error { background:#fdecea; color:#611a15; border:1px solid #f5c6cb; }
+    .error-message.warning { background:#fff4e5; color:#663c00; border:1px solid #ffe8b3; }
+    .error-message.info { background:#eef5ff; color:#0b3a75; border:1px solid #cfe2ff; }
+    @media (max-width:480px){
+      .detail-row { padding:4px 0; gap:6px; }
+      .detail-label { flex:0 0 110px; font-size:0.95rem; }
+      .detail-value { font-size:0.95rem; }
+    }
+  </style>
 </head>
 <body>
-  <!-- existing content preserved by runtime build -->
+  <main>
+    <!-- Upload/Drop area -->
+    <section id="uploadSection" class="upload" aria-label="Upload area">
+      <input id="fileInput" type="file" hidden aria-hidden="true" />
+      <button id="browseBtn" type="button">Choose file</button>
+      <p>Drag & drop a signed file here, or use the button to browse.</p>
+      <p>Supported: PDF, XML, P7M, P7S, SIG (max 6 MB)</p>
+    </section>
+
+    <!-- Loading overlay -->
+    <section id="loading" class="loading" role="status" aria-live="polite">
+      <div class="spinner" aria-hidden="true"></div>
+      <div class="loading-text">Processing...</div>
+    </section>
+
+    <!-- Results -->
+    <section id="results" class="results" aria-live="polite">
+      <div class="result-header">
+        <span id="resultIcon" class="result-icon" aria-hidden="true">✓</span>
+        <h2 id="resultTitle">Signature Valid</h2>
+      </div>
+      <div id="resultDetails" class="result-details"></div>
+    </section>
+
+    <!-- Errors -->
+    <div id="errorMessage" class="error-message" role="alert"></div>
+  </main>
+
+  <!-- Ensure mobile CSS is loaded (kept) -->
   <script src="public/init-mobile-css.js" defer></script>
+
+  <!-- App logic -->
+  <script src="app.js" defer></script>
 </body>
 </html>
