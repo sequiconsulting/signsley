@@ -73,38 +73,47 @@
   </div>
 
   <script>
-  // Ensure handlers attach after DOM is fully ready
+  // Ensure handlers attach after DOM is fully ready and call app.js pipeline
   window.addEventListener('DOMContentLoaded', function(){
-    const uploadSection = document.getElementById('uploadSection');
-    const fileInput = document.getElementById('fileInput');
-    const browseBtn = document.getElementById('browseBtn');
-
-    if(!uploadSection || !fileInput || !browseBtn) return;
-
-    // Defensive: remove any previous listeners if script is reloaded
-    const clone = uploadSection.cloneNode(true);
-    uploadSection.parentNode.replaceChild(clone, uploadSection);
-
     const area = document.getElementById('uploadSection');
     const input = document.getElementById('fileInput');
     const button = document.getElementById('browseBtn');
 
-    // Click on area opens picker unless the actual button was clicked
+    if(!area || !input || !button) return;
+
+    // Route picked/dropped files into app.js handler if present
+    function routeToApp(file){
+      try{
+        if(window.handleFile){ window.handleFile(file); return; }
+      }catch(_){}
+      // Fallback: dispatch change event so app.js listener runs
+      const dt = new DataTransfer(); dt.items.add(file); input.files = dt.files;
+      input.dispatchEvent(new Event('change', {bubbles:true}));
+    }
+
+    // Area click opens picker unless clicking the explicit button
     area.addEventListener('click', (e)=>{
       const isButton = e.target && (e.target.id === 'browseBtn' || (e.target.closest && e.target.closest('#browseBtn')));
-      if(isButton) return; // button has its own handler
-      input.click();
+      if(isButton) return; input.click();
     });
 
-    // Button handler
+    // Button opens picker
     button.addEventListener('click', (e)=>{ e.preventDefault(); e.stopPropagation(); input.click(); });
 
-    // Drag & drop
+    // Native input change -> app pipeline
+    input.addEventListener('change', (e)=>{
+      const f = e.target && e.target.files && e.target.files[0];
+      if(f) routeToApp(f);
+    });
+
+    // Drag & drop -> app pipeline
     ['dragenter','dragover'].forEach(evt=>{
       area.addEventListener(evt, (e)=>{ e.preventDefault(); e.stopPropagation(); area.classList.add('dragover'); });
     });
     ['dragleave','drop'].forEach(evt=>{
-      area.addEventListener(evt, (e)=>{ e.preventDefault(); e.stopPropagation(); if(evt==='drop'){ const dt=e.dataTransfer; if(dt && dt.files && dt.files.length){ const f=dt.files[0]; input.files = dt.files; const ev = new Event('change', { bubbles:true }); input.dispatchEvent(ev); } } area.classList.remove('dragover'); });
+      area.addEventListener(evt, (e)=>{ e.preventDefault(); e.stopPropagation(); if(evt==='drop'){
+        const dt=e.dataTransfer; if(dt && dt.files && dt.files.length){ routeToApp(dt.files[0]); }
+      } area.classList.remove('dragover'); });
     });
   });
   </script>
