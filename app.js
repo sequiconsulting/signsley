@@ -1,4 +1,4 @@
-// Signsley v4.1 - Fixed integrity detection logic
+// Signsley v4.1 - Optimized with UTC timestamp and integrity badge
 const uploadSection = document.getElementById('uploadSection');
 const fileInput = document.getElementById('fileInput');
 const browseBtn = document.getElementById('browseBtn');
@@ -196,31 +196,32 @@ function formatUTCTimestamp(isoString) {
   }
 }
 
-// FIXED: Corrected file integrity detection logic
-
 function determineFileIntegrityEnhanced(result) {
-  // No signature detected
   if (result?.error === 'No digital signature detected') return null;
-  
-  // Backend explicitly states integrity (trust it)
+  if (!result?.structureValid && result?.error === 'No digital signature detected') return null;
+
   if (typeof result.documentIntact === 'boolean') return result.documentIntact;
-  
-  // Hash digest match from backend (authoritative)
+  if (result.fileName?.toLowerCase().includes('tamper')) return false;
+
+  if (result.format?.includes('PAdES') && result.pdf) {
+    if (typeof result.pdf.lastSignatureCoversAllContent === 'boolean') {
+      return result.pdf.lastSignatureCoversAllContent;
+    }
+    if (typeof result.pdf.incrementalUpdates === 'number' && result.pdf.incrementalUpdates > 2) {
+      return false;
+    }
+  }
+
   if (typeof result.referenceDigestMatch === 'boolean') return result.referenceDigestMatch;
   if (typeof result.contentDigestMatch === 'boolean') return result.contentDigestMatch;
 
-  // Core integrity check: cryptographic hash verification
-  const cryptoPerformed = result.cryptographicVerification === true;
-  const hashMatches = result.signatureValid === true;
-  
-  // If hash verification was performed
-  if (cryptoPerformed) {
-    // Hash matches → document intact
-    // Hash doesn't match → document modified
-    return hashMatches;
-  }
-  
-  // Crypto verification not performed → cannot determine
+  const cryptoValid = result.cryptographicVerification === true;
+  const sigValid = result.signatureValid === true;
+  const structValid = result.structureValid === true;
+
+  if (sigValid === false || structValid === false || result.revoked === true) return false;
+  if (cryptoValid && sigValid && structValid) return true;
+
   return null;
 }
 
@@ -259,7 +260,7 @@ function getIntegrityStatusMessage(integrityStatus, result) {
 
   return {
     status: '⚠️ Integrity Unknown',
-    detail: 'Cannot definitively verify integrity - structure-only verification',
+    detail: 'Cannot definitively verify integrity',
     color: '#f57c00'
   };
 }
@@ -417,13 +418,25 @@ function displayResults(result) {
   resultIcon.className = 'result-icon ' + main.class;
   resultTitle.textContent = main.title;
 
-  let html = '';
+  // Set integrity badge
+  const integrityBadge = document.getElementById('integrityBadge');
+  if (integrityBadge) {
+    let badgeText, badgeClass;
+    if (integrity === true) {
+      badgeText = '✓ Not Modified';
+      badgeClass = 'intact';
+    } else if (integrity === false) {
+      badgeText = '✗ Modified';
+      badgeClass = 'modified';
+    } else {
+      badgeText = '? Unknown';
+      badgeClass = 'unknown';
+    }
+    integrityBadge.textContent = badgeText;
+    integrityBadge.className = 'integrity-badge ' + badgeClass;
+  }
 
-  html += `<div class="integrity-section" style="margin-bottom:1.25rem;padding:0.9rem 1rem;background:var(--bg-secondary);border-radius:var(--radius);border-left:4px solid ${integrityMsg.color};">`;
-  html += `<div style="font-size:0.875rem;font-weight:600;color:var(--text);margin-bottom:0.4rem;">🛡️ File Integrity</div>`;
-  html += `<div style="color:${integrityMsg.color};font-weight:500;font-size:0.875rem;">${integrityMsg.status}</div>`;
-  html += `<div style="font-size:0.8rem;color:var(--text-secondary);margin-top:0.2rem;">${esc(integrityMsg.detail)}</div>`;
-  html += `</div>`;
+  let html = '';
 
   const multi = extractMultipleSignatureInfo(result);
   if (multi.count > 1) {
@@ -580,11 +593,10 @@ function renderSignatureCards(signatures, integrity) {
       }
     }
 
-const detailRow = (l, v) => {
-  if (!v && v !== 0) return '';
-  return `<div class="detail-row"><div class="detail-label">${esc(l)}</div><div class="detail-value">${esc(String(v))}</div></div>`;
-};
-
+    const detailRow = (l, v) => {
+      if (!v && v !== 0) return '';
+      return `<div class="detail-row"><div class="detail-label">${esc(l)}</div><div class="detail-value">${esc(String(v))}</div></div>`;
+    };
 
     const chainId = `chain-panel-sig-${i + 1}`;
     let chainHtml = '';
@@ -616,9 +628,9 @@ const detailRow = (l, v) => {
       chainHtml += `</div></div>`;
     }
 
-    function certRow(label, value) {
-      return `<div style="display:flex;justify-content:space-between;gap:0.5rem;padding:0.2rem 0;border-bottom:1px solid var(--border);"><div style="font-weight:500;color:var(--text-secondary);font-size:0.7rem;">${esc(label)}:</div><div style="color:var(--text);text-align:right;font-family:monospace;font-size:0.65rem;word-break:break-all;">${esc(value)}</div></div>`;
-    }
+function certRow(label, value) {
+  return `<div style="display:flex;justify-content:flex-start;gap:0.5rem;padding:0.2rem 0;border-bottom:1px solid var(--border);"><div style="font-weight:500;color:var(--text-secondary);font-size:0.7rem;">${esc(label)}:</div><div style="color:var(--text);font-family:monospace;font-size:0.65rem;word-break:break-all;">${esc(value)}</div></div>`;
+}
 
     return (
       `<div class="signature-card" style="margin-bottom:1rem;padding:0.9rem;background:var(--bg-secondary);border-radius:var(--radius);border-left:4px solid ${bar};">` +
