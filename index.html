@@ -5,15 +5,29 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Signsley</title>
 
-  <!-- Compact CSS for mobile spacing -->
   <link rel="preload" as="style" href="styles/mobile-compact.css" />
   <link rel="stylesheet" href="styles/mobile-compact.css" data-mobile-compact="1" />
-  <!-- Modern theme inspired by Greensley -->
   <link rel="stylesheet" href="styles/modern-theme.css" />
-
-  <!-- Optional app styles if present -->
   <link rel="stylesheet" href="styles/app.css" />
   <link rel="stylesheet" href="styles/main.css" />
+  <style>
+    /* Single-column adjustments */
+    .header .header-inner{ justify-content:center; }
+    .brand{ justify-content:center; }
+    .nav{ display:none; }
+    .container{ max-width:820px; }
+    .grid{ display:block; }
+    .how-top{ margin-bottom:14px; }
+    .footer{ text-align:center; }
+    .footer p{ margin:0; }
+    /* Certificate chain list */
+    .chain-list{ margin:8px 0 0; padding:0; list-style:none; }
+    .chain-item{ display:flex; gap:10px; padding:8px 0; border-bottom:1px dashed #eef2f0; align-items:center; }
+    .chain-item:last-child{ border-bottom:0; }
+    .chain-pos{ flex:0 0 24px; height:24px; border-radius:6px; background:var(--gs-primary-050); color:var(--gs-primary); display:inline-grid; place-items:center; font-weight:700; font-size:.9rem; }
+    .chain-main{ flex:1; }
+    .chain-sub{ color:var(--gs-muted); font-size:.92rem; }
+  </style>
 </head>
 <body>
   <header class="header">
@@ -22,19 +36,22 @@
         <span class="brand-badge" aria-hidden="true"></span>
         <span class="brand-title">Signsley</span>
       </a>
-      <nav class="nav" aria-label="Primary">
-        <a href="./">Verify</a>
-        <a href="#how-it-works">How it works</a>
-        <a href="#privacy">Privacy</a>
-      </nav>
     </div>
   </header>
 
   <div class="container">
-    <main class="grid">
+    <!-- How it works moved to top, single column -->
+    <section class="card how-top" id="how-it-works">
+      <div class="card-header"><h1 class="card-title">How it works</h1></div>
+      <div class="card-body">
+        <p style="margin:0;color:var(--gs-muted)">Signsley verifies digital signatures (PAdES, XAdES, CAdES), extracts certificate details and the full certificate chain, and shows the signature date when available or estimated.</p>
+      </div>
+    </section>
+
+    <main>
       <section class="card">
         <div class="card-header">
-          <h1 class="card-title">Verify a signed document</h1>
+          <h2 class="card-title">Verify a signed document</h2>
         </div>
         <div class="card-body">
           <section id="uploadSection" class="upload" aria-label="Upload area">
@@ -60,6 +77,8 @@
                   <h2 id="resultTitle" class="card-title" style="margin:0">Signature Valid</h2>
                 </div>
                 <div id="resultDetails" class="result-details"></div>
+                <!-- Certificate chain block (rendered by app.js enhancement) -->
+                <div id="certificateChainBlock" style="margin-top:10px"></div>
               </div>
             </div>
           </section>
@@ -67,28 +86,65 @@
           <div id="errorMessage" class="error-message" role="alert"></div>
         </div>
       </section>
-
-      <aside class="card" id="how-it-works">
-        <div class="card-header"><h2 class="card-title">How it works</h2></div>
-        <div class="card-body">
-          <p style="margin:0;color:var(--gs-muted)">Signsley verifies digital signatures (PAdES, XAdES, CAdES) and extracts certificate details, certificate chain, and signing time when available.</p>
-        </div>
-      </aside>
     </main>
 
-    <section id="privacy" class="card" style="margin-top:12px">
-      <div class="card-header"><h2 class="card-title">Privacy</h2></div>
-      <div class="card-body">
-        <p style="margin:0;color:var(--gs-muted)">Your files are processed securely. Only the data necessary for verification is used.</p>
-      </div>
-    </section>
-
     <footer class="footer">
-      Powered by <a href="https://www.greensley.eu" target="_blank" rel="noopener">Greensley</a>
+      <p>Powered by <a href="https://www.greensley.eu" target="_blank" rel="noopener">Greensley</a></p>
+      <p id="privacy" style="color:var(--gs-muted)">Your files are processed securely. Only data necessary for verification is used.</p>
     </footer>
   </div>
 
   <script src="public/init-mobile-css.js" defer></script>
+  <script>
+    // UI enhancements: expand certificate chain and add signature date line
+    document.addEventListener('DOMContentLoaded', () => {
+      const originalDisplayResults = window.displayResults;
+      if (typeof originalDisplayResults === 'function') {
+        window.displayResults = function(result){
+          originalDisplayResults(result);
+          try {
+            // Add explicit Signature Date line if available
+            const details = document.getElementById('resultDetails');
+            if (details && result && (result.signatureDate || result.signingTime)) {
+              const exists = details.querySelector('[data-extra="sigdate"]');
+              if (!exists) {
+                const sigDate = (result.signatureDate || result.signingTime);
+                const row = document.createElement('div');
+                row.className = 'detail-row';
+                row.setAttribute('data-extra','sigdate');
+                row.innerHTML = '<div class="detail-label">Signature Date:</div><div class="detail-value">' + (sigDate) + '</div>';
+                details.prepend(row);
+              }
+            }
+
+            // Expand certificate chain rendering when result.certificateChain is present
+            const chainHost = document.getElementById('certificateChainBlock');
+            if (chainHost) {
+              chainHost.innerHTML = '';
+              if (result && Array.isArray(result.certificateChain) && result.certificateChain.length) {
+                const title = document.createElement('div');
+                title.className = 'detail-row';
+                title.innerHTML = '<div class="detail-label">Certificate Chain:</div><div class="detail-value">' + result.certificateChain.length + ' certificate(s)</div>';
+                chainHost.appendChild(title);
+
+                const list = document.createElement('ul');
+                list.className = 'chain-list';
+                result.certificateChain.forEach((c) => {
+                  const li = document.createElement('li');
+                  li.className = 'chain-item';
+                  li.innerHTML = '<div class="chain-pos">' + (c.position || '?') + '</div>'+
+                                 '<div class="chain-main"><div><strong>' + (c.subjectCN || 'Unknown') + '</strong></div>'+
+                                 '<div class="chain-sub">Issued by: ' + (c.issuerCN || 'Unknown') + '</div></div>';
+                  list.appendChild(li);
+                });
+                chainHost.appendChild(list);
+              }
+            }
+          } catch(e) { /* no-op */ }
+        }
+      }
+    });
+  </script>
   <script src="app.js" defer></script>
 </body>
 </html>
