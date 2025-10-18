@@ -1,50 +1,7 @@
 /* Signsley collapsible certificate chains */
-.chain-toggle {
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: #2196f3;
-  font-weight: 600;
-  font-size: 0.875rem;
-  user-select: none;
-}
-
-.chain-toggle:hover {
-  text-decoration: underline;
-  color: #1976d2;
-}
-
-.chain-panel {
-  display: none;
-  margin-top: 0.75rem;
-  padding: 0.75rem;
-  background: var(--bg);
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  font-size: 0.8125rem;
-}
-
-.chain-panel.show {
-  display: block;
-}
-
-/* Ensure signature cards have proper spacing */
-.signature-card {
-  margin-bottom: 1rem;
-  padding: 0.9rem;
-  background: var(--bg-secondary);
-  border-radius: 10px;
-  position: relative;
-}
-
-@media (max-width: 640px) {
-  .chain-panel {
-    padding: 0.5rem;
-    font-size: 0.75rem;
-  }
-  
-  .chain-toggle {
-    font-size: 0.8125rem;
-  }
-}
+.chain-toggle { cursor:pointer; display:inline-flex; align-items:center; gap:6px; color:#2196f3; font-weight:600; font-size:0.875rem; user-select:none; }
+.chain-toggle:hover { text-decoration:underline; color:#1976d2; }
+.chain-panel { display:none; margin-top:0.75rem; padding:0.75rem; background:var(--bg); border-radius:8px; border:1px solid var(--border); font-size:0.8125rem; }
+.chain-panel.show { display:block; }
+.signature-card { margin-bottom:1rem; padding:0.9rem; background:var(--bg-secondary); border-radius:10px; position:relative; }
+@media (max-width:640px){ .chain-panel{ padding:0.5rem; font-size:0.75rem; } .chain-toggle{ font-size:0.8125rem; } }

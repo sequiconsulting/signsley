@@ -73,7 +73,7 @@
   </div>
 
   <script>
-  // Ensure handlers attach after DOM is fully ready and call app.js pipeline
+  // Unified, robust upload wiring with immediate routing
   window.addEventListener('DOMContentLoaded', function(){
     const area = document.getElementById('uploadSection');
     const input = document.getElementById('fileInput');
@@ -81,61 +81,38 @@
 
     if(!area || !input || !button) return;
 
-    // Route picked/dropped files into app.js handler if present
     function routeToApp(file){
-      try{
-        if(window.handleFile){ window.handleFile(file); return; }
-      }catch(_){/* noop */}
-      // Fallback: dispatch change event so app.js listener runs
+      try{ if(window.handleFile){ window.handleFile(file); return; } }catch(_){ }
       const dt = new DataTransfer(); dt.items.add(file); input.files = dt.files;
       input.dispatchEvent(new Event('change', {bubbles:true}));
     }
 
-    // Area click opens picker unless clicking the explicit button
+    // Click on area opens picker unless button itself
     area.addEventListener('click', (e)=>{
       const isButton = e.target && (e.target.id === 'browseBtn' || (e.target.closest && e.target.closest('#browseBtn')));
       if(isButton) return; input.click();
     });
 
-    // Button opens picker
-    button.addEventListener('click', (e)=>{ e.preventDefault(); e.stopPropagation(); input.value = ''; input.click(); });
+    // Button -> clear value and click via microtask, then change/input handle routing
+    button.addEventListener('click', (e)=>{ e.preventDefault(); e.stopPropagation(); input.value=''; Promise.resolve().then(()=> input.click()); });
 
-    // Native input change -> app pipeline (ensure fires even if same file chosen again)
-    input.addEventListener('change', (e)=>{
-      const f = e.target && e.target.files && e.target.files[0];
-      if(f) routeToApp(f);
-    });
+    const onPick = (e)=>{ const f = e.target && e.target.files && e.target.files[0]; if (f) routeToApp(f); };
+    input.addEventListener('change', onPick);
+    input.addEventListener('input', onPick);
 
-    // Also handle 'input' event for browsers that fire it instead of 'change' in some cases
-    input.addEventListener('input', (e)=>{
-      const f = e.target && e.target.files && e.target.files[0];
-      if(f) routeToApp(f);
-    });
-
-    // Drag & drop -> app pipeline
-    ['dragenter','dragover'].forEach(evt=>{
-      area.addEventListener(evt, (e)=>{ e.preventDefault(); e.stopPropagation(); area.classList.add('dragover'); });
-    });
-    ['dragleave','drop'].forEach(evt=>{
-      area.addEventListener(evt, (e)=>{ e.preventDefault(); e.stopPropagation(); if(evt==='drop'){
-        const dt=e.dataTransfer; if(dt && dt.files && dt.files.length){ routeToApp(dt.files[0]); }
-      } area.classList.remove('dragover'); });
-    });
+    ['dragenter','dragover'].forEach(evt=> area.addEventListener(evt, (e)=>{ e.preventDefault(); e.stopPropagation(); area.classList.add('dragover'); }));
+    ['dragleave','drop'].forEach(evt=> area.addEventListener(evt, (e)=>{ e.preventDefault(); e.stopPropagation(); if(evt==='drop'){ const dt=e.dataTransfer; if(dt && dt.files && dt.files.length){ routeToApp(dt.files[0]); } } area.classList.remove('dragover'); }));
   });
   </script>
 
   <script src="app.js"></script>
   <script>
-    // Delegated handler for toggling certificate chains inside signature cards
     document.addEventListener('click', function(e){
       const toggle = e.target.closest && e.target.closest('[data-chain-toggle]');
       if(!toggle) return;
       const targetId = toggle.getAttribute('data-chain-toggle');
       const panel = document.getElementById(targetId);
-      if(panel){ 
-        panel.classList.toggle('show');
-        panel.style.display = panel.classList.contains('show') ? 'block' : 'none';
-      }
+      if(panel){ panel.classList.toggle('show'); panel.style.display = panel.classList.contains('show') ? 'block' : 'none'; }
     });
   </script>
 </body>
