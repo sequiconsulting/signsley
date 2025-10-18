@@ -581,10 +581,11 @@ function renderSignatureCards(signatures, integrity) {
       }
     }
 
-    const detailRow = (l, v) => {
-      if (!v && v !== 0) return '';
-      return `<div style="display:flex;justify-content:space-between;align-items:baseline;gap:1rem;padding:0.4rem 0;border-bottom:1px solid var(--border);line-height:1.4;"><div style="font-weight:500;color:var(--text-secondary);white-space:nowrap;flex-shrink:0;font-size:0.8rem;">${esc(l)}:</div><div style="color:var(--text);text-align:right;word-break:break-word;font-size:0.8rem;">${esc(String(v))}</div></div>`;
-    };
+const detailRow = (l, v) => {
+  if (!v && v !== 0) return '';
+  return `<div class="detail-row"><div class="detail-label">${esc(l)}</div><div class="detail-value">${esc(String(v))}</div></div>`;
+};
+
 
     const chainId = `chain-panel-sig-${i + 1}`;
     let chainHtml = '';
