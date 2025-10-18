@@ -4,7 +4,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Signsley</title>
-
   <link rel="preload" as="style" href="styles/mobile-compact.css" />
   <link rel="stylesheet" href="styles/mobile-compact.css" data-mobile-compact="1" />
   <link rel="stylesheet" href="styles/modern-theme.css" />
@@ -27,18 +26,17 @@
     .chain-pos{ flex:0 0 24px; height:24px; border-radius:6px; background:var(--gs-primary-050); color:var(--gs-primary); display:inline-grid; place-items:center; font-weight:700; font-size:.9rem; }
     .chain-main{ flex:1; }
     .chain-sub{ color:var(--gs-muted); font-size:.92rem; }
+    .tech-block{ margin-top:8px; }
   </style>
 </head>
 <body>
   <header class="header">
     <div class="header-inner">
       <a class="brand" href="./" aria-label="Signsley home">
-        <span class="brand-badge" aria-hidden="true"></span>
-        <span class="brand-title">Signsley</span>
+        <span class="brand-title">signsley</span>
       </a>
     </div>
   </header>
-
   <div class="container">
     <section class="card how-top" id="how-it-works">
       <div class="card-header"><h1 class="card-title">How it works</h1></div>
@@ -46,7 +44,6 @@
         <p style="margin:0;color:var(--gs-muted)">Signsley verifies digital signatures (PAdES, XAdES, CAdES), extracts certificate details and the full certificate chain, and shows the signature date when available or estimated.</p>
       </div>
     </section>
-
     <main>
       <section class="card">
         <div class="card-header" style="text-align:center">
@@ -61,12 +58,10 @@
             <p style="margin:10px 0 0;color:var(--gs-muted)">Drag & drop a signed file, or use the button above.</p>
             <p style="margin:6px 0 0;color:var(--gs-muted);font-size:.95rem">Supported: PDF, XML, P7M, P7S, SIG (max 6&nbsp;MB)</p>
           </section>
-
           <section id="loading" class="loading" role="status" aria-live="polite">
             <div class="spinner" aria-hidden="true"></div>
             <div class="loading-text">Processing...</div>
           </section>
-
           <section id="results" class="results" aria-live="polite" style="margin-top:16px">
             <div class="card" style="border:none;box-shadow:none">
               <div class="card-body">
@@ -79,21 +74,17 @@
               </div>
             </div>
           </section>
-
           <div id="errorMessage" class="error-message" role="alert"></div>
         </div>
       </section>
     </main>
-
     <footer class="footer">
       <p>Powered by <a href="https://www.greensley.eu" target="_blank" rel="noopener">Greensley</a></p>
       <p id="privacy" style="color:var(--gs-muted)">Your files are processed securely. Only data necessary for verification is used.</p>
     </footer>
   </div>
-
   <script src="public/init-mobile-css.js" defer></script>
   <script>
-    // Wrap original displayResults to add explicit Signature Date and expanded certificate chain reliably
     (function(){
       const addSigDateRow = (detailsEl, value) => {
         if (!detailsEl || !value) return;
@@ -105,7 +96,42 @@
         row.innerHTML = '<div class="detail-label">Signature Date:</div><div class="detail-value">' + value + '</div>';
         detailsEl.prepend(row);
       };
-      const renderChain = (host, chain) => {
+      const copyBtn = (text) => '<button class="icon-btn" title="Copy" onclick="navigator.clipboard.writeText(\''+ (text||'') +'\')">⧉</button>';
+      const listBlock = (title, items) => {
+        if (!items || !items.length) return '';
+        const lis = items.map(v => '<li class="mono">'+ v +'</li>').join('');
+        return '<div class="kv"><div class="k">'+title+'</div><div class="v"><ul style="margin:0;padding-left:18px">'+lis+'</ul></div></div>';
+      };
+      const renderTechCollapse = (tech, idx) => {
+        const serial = tech.serial || 'Unknown';
+        const sigAlg = tech.signatureAlgorithm || 'Unknown';
+        const pkAlg = tech.publicKeyAlgorithm || 'Unknown';
+        const keySize = tech.keySize ? (tech.keySize + ' bits') : 'Unknown';
+        const san = Array.isArray(tech.san) ? tech.san : [];
+        const policies = Array.isArray(tech.policies) ? tech.policies : [];
+        const aia = Array.isArray(tech.aia) ? tech.aia : [];
+        const crl = Array.isArray(tech.crlDP) ? tech.crlDP : [];
+        return (
+          '<div class="collapse" id="cert-tech-'+idx+'">'+
+            '<div class="collapse-header" onclick="this.parentElement.classList.toggle(\'open\')">'+
+              '<div class="collapse-title">Technical details</div>'+
+              '<div class="collapse-icon">›</div>'+
+            '</div>'+
+            '<div class="collapse-body">'+
+              '<div class="kv">'+
+                '<div class="k">Serial</div><div class="v mono">'+ serial +' '+ copyBtn(serial) +'</div>'+
+                '<div class="k">Sig. Algorithm</div><div class="v mono">'+ sigAlg +' '+ copyBtn(sigAlg) +'</div>'+
+                '<div class="k">Public Key</div><div class="v mono">'+ pkAlg + (keySize?(' · '+keySize):'') +'</div>'+
+              '</div>'+
+              listBlock('SAN', san)+
+              listBlock('Policies', policies)+
+              listBlock('AIA (OCSP/Issuers)', aia)+
+              listBlock('CRL DP', crl)+
+            '</div>'+
+          '</div>'
+        );
+      };
+      const renderChain = (host, chain, chainTech=[]) => {
         host.innerHTML = '';
         const title = document.createElement('div');
         title.className = 'detail-row';
@@ -119,45 +145,35 @@
           const pos = (c.position || (i+1));
           const subject = (c.subjectCN || 'Unknown');
           const issuer = (c.issuerCN || 'Unknown');
+          const tech = chainTech[i] || {};
           li.innerHTML = '<div class="chain-pos">' + pos + '</div>'+
                           '<div class="chain-main"><div><strong>' + subject + '</strong></div>'+
-                          '<div class="chain-sub">Issued by: ' + issuer + '</div></div>';
+                          '<div class="chain-sub">Issued by: ' + issuer + '</div>'+
+                          '<div class="tech-block">'+ renderTechCollapse(tech, i) +'</div></div>';
           list.appendChild(li);
         });
         host.appendChild(list);
       };
-      const upgrade = () => {
+      const refreshFrom = (result) => {
         const details = document.getElementById('resultDetails');
         const chainHost = document.getElementById('certificateChainBlock');
-        // If result already available in window.lastResult (fallback), render now
-        if (window.lastVerificationResult) {
-          const r = window.lastVerificationResult;
-          const sigDate = r.signatureDate || r.signingTime || null;
-          if (sigDate) addSigDateRow(details, sigDate);
-          if (Array.isArray(r.certificateChain) && r.certificateChain.length && chainHost) {
-            renderChain(chainHost, r.certificateChain);
-          }
-        }
+        const sigDate = result && (result.signatureDate || result.signingTime) || null;
+        if (sigDate) addSigDateRow(details, sigDate);
+        if (Array.isArray(result?.certificateChain) && result.certificateChain.length && chainHost){
+          renderChain(chainHost, result.certificateChain, Array.isArray(result.certificateChainTechnical)?result.certificateChainTechnical:[]);
+        } else if (chainHost){ chainHost.innerHTML = ''; }
       };
       const hook = () => {
         const orig = window.displayResults;
         window.displayResults = function(result){
-          window.lastVerificationResult = result; // store for later
+          window.lastVerificationResult = result;
           if (typeof orig === 'function') orig(result);
-          try{
-            const details = document.getElementById('resultDetails');
-            const chainHost = document.getElementById('certificateChainBlock');
-            const sigDate = result && (result.signatureDate || result.signingTime) || null;
-            if (sigDate) addSigDateRow(details, sigDate);
-            if (Array.isArray(result?.certificateChain) && result.certificateChain.length && chainHost){
-              renderChain(chainHost, result.certificateChain);
-            } else if (chainHost){ chainHost.innerHTML = ''; }
-          }catch(e){}
+          try{ refreshFrom(result); }catch(e){}
         };
       };
       if (document.readyState === 'loading'){
-        document.addEventListener('DOMContentLoaded', () => { hook(); upgrade(); });
-      } else { hook(); upgrade(); }
+        document.addEventListener('DOMContentLoaded', () => { hook(); if (window.lastVerificationResult) refreshFrom(window.lastVerificationResult); });
+      } else { hook(); if (window.lastVerificationResult) refreshFrom(window.lastVerificationResult); }
     })();
   </script>
   <script src="app.js" defer></script>
