@@ -77,46 +77,23 @@
     const fileInput = document.getElementById('fileInput');
     const browseBtn = document.getElementById('browseBtn');
 
-    // Guard if elements missing
     if(!uploadSection || !fileInput || !browseBtn) return;
 
-    // Clicks
+    // Open picker by area click unless button
     uploadSection.addEventListener('click', (e)=>{
-      // Avoid clicking when user clicks the button (handled separately)
-      if((e.target && e.target.id === 'browseBtn') || (e.target && e.target.closest && e.target.closest('#browseBtn'))) return;
+      if(e.target && (e.target.id === 'browseBtn' || (e.target.closest && e.target.closest('#browseBtn')))) return;
       fileInput.click();
     });
 
-    browseBtn.addEventListener('click', (e)=>{
-      e.preventDefault();
-      e.stopPropagation();
-      fileInput.click();
-    });
+    browseBtn.addEventListener('click', (e)=>{ e.preventDefault(); e.stopPropagation(); fileInput.click(); });
 
-    // Drag & drop
+    // DnD styling
     ['dragenter','dragover'].forEach(evt=>{
-      uploadSection.addEventListener(evt, (e)=>{
-        e.preventDefault();
-        e.stopPropagation();
-        uploadSection.classList.add('dragover');
-      });
+      uploadSection.addEventListener(evt, (e)=>{ e.preventDefault(); e.stopPropagation(); uploadSection.classList.add('dragover'); });
     });
-
-    ;['dragleave','drop'].forEach(evt=>{
-      uploadSection.addEventListener(evt, (e)=>{
-        e.preventDefault();
-        e.stopPropagation();
-        if(evt==='drop'){
-          const dt = e.dataTransfer;
-          if(dt && dt.files && dt.files.length){
-            const f = dt.files[0];
-            const changeEvt = new Event('change');
-            Object.defineProperty(fileInput, 'files', { value: dt.files, writable: false });
-            fileInput.dispatchEvent(changeEvt);
-          }
-        }
-        uploadSection.classList.remove('dragover');
-      });
+    ['dragleave','drop'].forEach(evt=>{
+      uploadSection.addEventListener(evt, (e)=>{ e.preventDefault(); e.stopPropagation(); if(evt==='drop'){ const dt=e.dataTransfer; if(dt && dt.files && dt.files.length){ const f=dt.files[0]; // Fire change for app.js listener
+          const dataTransfer = new DataTransfer(); dataTransfer.items.add(f); fileInput.files = dataTransfer.files; const ev = new Event('change', { bubbles:true }); fileInput.dispatchEvent(ev); } } uploadSection.classList.remove('dragover'); });
     });
   })();
   </script>
