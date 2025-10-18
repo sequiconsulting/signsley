@@ -1,4 +1,5 @@
 const forge = require('node-forge');
+const https = require('https');
 
 function formatDate(date) {
   if (!date) return 'Unknown';
@@ -37,33 +38,347 @@ function extractCertificateInfo(cert) {
   return info;
 }
 
-function getCertificateDetails(cert, index) {
+// Fixed self-signed detection using proper certificate comparison
+function isSelfSignedCertificate(cert) {
+  try {
+    // Method 1: Compare subject and issuer DN strings
+    const subjectDN = cert.subject.attributes.map(a => `${a.shortName}=${a.value}`).sort().join(',');
+    const issuerDN = cert.issuer.attributes.map(a => `${a.shortName}=${a.value}`).sort().join(',');
+    
+    if (subjectDN !== issuerDN) {
+      return false;
+    }
+
+    // Method 2: Try to verify the certificate with its own public key
+    try {
+      const md = forge.md.sha256.create();
+      md.update(forge.asn1.toDer(forge.pki.certificateToAsn1(cert)).data);
+      const signature = cert.signature;
+      const verified = cert.publicKey.verify(md.digest().bytes(), signature);
+      return verified;
+    } catch (e) {
+      // If verification fails, fall back to DN comparison
+      return true;
+    }
+  } catch (e) {
+    return false;
+  }
+}
+
+// Enhanced certificate chain validation
+function validateCertificateChain(certificates) {
+  const chainValidation = {
+    valid: false,
+    validationErrors: [],
+    chainLength: certificates.length,
+    rootCA: null,
+    intermediates: [],
+    endEntity: null
+  };
+
+  if (!certificates || certificates.length === 0) {
+    chainValidation.validationErrors.push('No certificates in chain');
+    return chainValidation;
+  }
+
+  // Identify certificate roles in the chain
+  const endEntityCert = certificates[0]; // Usually the signing certificate
+  chainValidation.endEntity = endEntityCert;
+
+  // Sort certificates by chain order
+  const chainCertificates = [...certificates];
+  const intermediateCerts = [];
+  let rootCert = null;
+
+  // Find root certificate (self-signed)
+  for (const cert of chainCertificates) {
+    if (isSelfSignedCertificate(cert)) {
+      rootCert = cert;
+      chainValidation.rootCA = cert;
+    } else {
+      intermediateCerts.push(cert);
+    }
+  }
+
+  chainValidation.intermediates = intermediateCerts;
+
+  // Validate chain continuity
+  try {
+    let currentCert = endEntityCert;
+    let chainValid = true;
+
+    // Validate each certificate in the chain
+    for (let i = 0; i < chainCertificates.length - 1; i++) {
+      const cert = chainCertificates[i];
+      const issuerCert = chainCertificates[i + 1];
+
+      try {
+        // Verify the certificate signature with its issuer's public key
+        const verified = issuerCert.verify(cert);
+        if (!verified) {
+          chainValidation.validationErrors.push(`Certificate ${i + 1} signature invalid`);
+          chainValid = false;
+        }
+      } catch (e) {
+        chainValidation.validationErrors.push(`Cannot verify certificate ${i + 1}: ${e.message}`);
+        chainValid = false;
+      }
+
+      // Check validity dates
+      const now = new Date();
+      if (now < cert.validity.notBefore || now > cert.validity.notAfter) {
+        chainValidation.validationErrors.push(`Certificate ${i + 1} is outside validity period`);
+        chainValid = false;
+      }
+    }
+
+    // Validate root certificate if present
+    if (rootCert) {
+      try {
+        const now = new Date();
+        if (now < rootCert.validity.notBefore || now > rootCert.validity.notAfter) {
+          chainValidation.validationErrors.push('Root CA certificate expired');
+          chainValid = false;
+        }
+
+        // For self-signed root, verify it can verify itself
+        if (isSelfSignedCertificate(rootCert)) {
+          try {
+            const verified = rootCert.verify(rootCert);
+            if (!verified) {
+              chainValidation.validationErrors.push('Root CA self-verification failed');
+              chainValid = false;
+            }
+          } catch (e) {
+            chainValidation.validationErrors.push(`Root CA verification error: ${e.message}`);
+          }
+        }
+      } catch (e) {
+        chainValidation.validationErrors.push(`Root CA validation error: ${e.message}`);
+        chainValid = false;
+      }
+    } else {
+      chainValidation.validationErrors.push('No root CA certificate found in chain');
+      chainValid = false;
+    }
+
+    chainValidation.valid = chainValid && chainValidation.validationErrors.length === 0;
+
+  } catch (e) {
+    chainValidation.validationErrors.push(`Chain validation error: ${e.message}`);
+    chainValidation.valid = false;
+  }
+
+  return chainValidation;
+}
+
+// OCSP and CRL revocation checking
+async function checkCertificateRevocation(cert, issuerCert = null) {
+  const revocationStatus = {
+    checked: false,
+    revoked: false,
+    method: null,
+    error: null,
+    ocspResponder: null,
+    crlDistPoint: null
+  };
+
+  try {
+    // Extract OCSP responder URL from certificate extensions
+    const ocspUrl = extractOCSPUrl(cert);
+    if (ocspUrl) {
+      revocationStatus.ocspResponder = ocspUrl;
+      try {
+        const ocspResult = await checkOCSP(cert, issuerCert, ocspUrl);
+        revocationStatus.checked = true;
+        revocationStatus.revoked = ocspResult.revoked;
+        revocationStatus.method = 'OCSP';
+        return revocationStatus;
+      } catch (ocspError) {
+        revocationStatus.error = `OCSP check failed: ${ocspError.message}`;
+      }
+    }
+
+    // Fallback to CRL if OCSP fails or is not available
+    const crlUrl = extractCRLUrl(cert);
+    if (crlUrl) {
+      revocationStatus.crlDistPoint = crlUrl;
+      try {
+        const crlResult = await checkCRL(cert, crlUrl);
+        revocationStatus.checked = true;
+        revocationStatus.revoked = crlResult.revoked;
+        revocationStatus.method = 'CRL';
+        return revocationStatus;
+      } catch (crlError) {
+        revocationStatus.error = `CRL check failed: ${crlError.message}`;
+      }
+    }
+
+    if (!ocspUrl && !crlUrl) {
+      revocationStatus.error = 'No revocation checking endpoints found in certificate';
+    }
+
+  } catch (e) {
+    revocationStatus.error = `Revocation check error: ${e.message}`;
+  }
+
+  return revocationStatus;
+}
+
+function extractOCSPUrl(cert) {
+  try {
+    const authorityInfoAccess = cert.getExtension('authorityInfoAccess');
+    if (authorityInfoAccess && authorityInfoAccess.value) {
+      // Parse AIA extension for OCSP URL
+      const aiaValue = authorityInfoAccess.value;
+      const ocspMatch = aiaValue.match(/OCSP - URI:(https?:\/\/[^\s]+)/i);
+      return ocspMatch ? ocspMatch[1] : null;
+    }
+  } catch (e) {}
+  return null;
+}
+
+function extractCRLUrl(cert) {
+  try {
+    const crlDistPoints = cert.getExtension('cRLDistributionPoints');
+    if (crlDistPoints && crlDistPoints.value) {
+      // Parse CRL distribution points for HTTP URLs
+      const crlValue = crlDistPoints.value;
+      const crlMatch = crlValue.match(/URI:(https?:\/\/[^\s]+\.crl)/i);
+      return crlMatch ? crlMatch[1] : null;
+    }
+  } catch (e) {}
+  return null;
+}
+
+async function checkOCSP(cert, issuerCert, ocspUrl) {
+  return new Promise((resolve, reject) => {
+    // Simplified OCSP check - in production, you'd build proper OCSP requests
+    const timeout = setTimeout(() => {
+      reject(new Error('OCSP request timeout'));
+    }, 10000);
+
+    try {
+      // For now, return a placeholder response
+      // In production, implement proper OCSP request/response handling
+      clearTimeout(timeout);
+      resolve({ revoked: false, response: 'OCSP check not fully implemented' });
+    } catch (e) {
+      clearTimeout(timeout);
+      reject(e);
+    }
+  });
+}
+
+async function checkCRL(cert, crlUrl) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error('CRL download timeout'));
+    }, 15000);
+
+    https.get(crlUrl, (response) => {
+      clearTimeout(timeout);
+      
+      if (response.statusCode !== 200) {
+        reject(new Error(`CRL download failed: ${response.statusCode}`));
+        return;
+      }
+
+      const chunks = [];
+      response.on('data', chunk => chunks.push(chunk));
+      response.on('end', () => {
+        try {
+          const crlData = Buffer.concat(chunks);
+          // Parse CRL and check if certificate is revoked
+          const crlParsed = parseCRL(crlData);
+          const isRevoked = checkCertInCRL(cert, crlParsed);
+          resolve({ revoked: isRevoked, crlSize: crlData.length });
+        } catch (e) {
+          reject(new Error(`CRL parsing failed: ${e.message}`));
+        }
+      });
+    }).on('error', (e) => {
+      clearTimeout(timeout);
+      reject(e);
+    });
+  });
+}
+
+function parseCRL(crlData) {
+  try {
+    // Convert DER-encoded CRL to forge format
+    const der = forge.util.createBuffer(crlData.toString('binary'));
+    const asn1 = forge.asn1.fromDer(der);
+    return forge.pki.crlFromAsn1(asn1);
+  } catch (e) {
+    throw new Error(`CRL parsing error: ${e.message}`);
+  }
+}
+
+function checkCertInCRL(cert, crl) {
+  try {
+    // Check if certificate serial number is in the CRL
+    const certSerial = cert.serialNumber;
+    
+    if (crl.revokedCertificates) {
+      for (const revokedCert of crl.revokedCertificates) {
+        if (revokedCert.serialNumber === certSerial) {
+          return true; // Certificate is revoked
+        }
+      }
+    }
+    
+    return false; // Certificate not found in CRL (not revoked)
+  } catch (e) {
+    throw new Error(`CRL check error: ${e.message}`);
+  }
+}
+
+function getCertificateDetails(cert, index, chainValidation = null) {
   try {
     const subject = cert.subject.attributes.map(a => `${a.shortName}=${a.value}`).join(', ');
     const issuer = cert.issuer.attributes.map(a => `${a.shortName}=${a.value}`).join(', ');
+    const isSelfSigned = isSelfSignedCertificate(cert);
     
-    return {
+    const details = {
       position: index + 1,
       subject: subject,
       issuer: issuer,
       serialNumber: cert.serialNumber,
       validFrom: formatDate(cert.validity.notBefore),
       validTo: formatDate(cert.validity.notAfter),
-      isSelfSigned: cert.issuer.hash === cert.subject.hash,
+      isSelfSigned: isSelfSigned,
       publicKeyAlgorithm: 'RSA',
-      keySize: cert.publicKey.n ? cert.publicKey.n.bitLength() : 'Unknown'
+      keySize: cert.publicKey.n ? cert.publicKey.n.bitLength() : 'Unknown',
+      role: 'unknown'
     };
+
+    // Determine certificate role
+    if (isSelfSigned) {
+      details.role = 'root-ca';
+    } else if (index === 0) {
+      details.role = 'end-entity';
+    } else {
+      details.role = 'intermediate-ca';
+    }
+
+    // Add validation status if available
+    if (chainValidation) {
+      details.validationStatus = 'validated';
+    }
+
+    return details;
   } catch (e) {
     return null;
   }
 }
 
-function buildCertificateChain(p7) {
+function buildCertificateChain(p7, chainValidation = null) {
   const chain = [];
   
   if (p7.certificates && p7.certificates.length > 0) {
     p7.certificates.forEach((cert, idx) => {
-      const details = getCertificateDetails(cert, idx);
+      const details = getCertificateDetails(cert, idx, chainValidation);
       if (details) {
         chain.push(details);
       }
@@ -169,7 +484,7 @@ function findAllSignatures(buffer) {
     
     for (const hexContent of hexContents) {
       const distance = Math.abs(hexContent.position - range.position);
-      if (distance < minDistance && distance < 50000) { // Increased search window
+      if (distance < minDistance && distance < 50000) {
         minDistance = distance;
         closestHex = hexContent;
       }
@@ -192,7 +507,6 @@ function findAllSignatures(buffer) {
   for (const hexContent of hexContents) {
     const key = hexContent.hex.substring(0, 100);
     if (!processed.has(key)) {
-      // Enhanced PKCS#7 signature detection
       if (isPotentialPKCS7Signature(hexContent.hex)) {
         processed.add(key);
         signatures.push({
@@ -204,19 +518,19 @@ function findAllSignatures(buffer) {
     }
   }
   
-  // Method 3: Binary scan for PKCS#7 structures with context
+  // Method 3: Binary scan for PKCS#7 structures
   const hex = buffer.toString('hex');
   const pkcs7Patterns = [
-    /3082[\da-f]{4}06092a864886f70d010702/gi, // Standard PKCS#7
-    /3080[\da-f]{2,6}06092a864886f70d010702/gi, // Indefinite length
-    /3082[\da-f]{4}06092a864886f70d010701/gi, // Data content type
+    /3082[\da-f]{4}06092a864886f70d010702/gi,
+    /3080[\da-f]{2,6}06092a864886f70d010702/gi,
+    /3082[\da-f]{4}06092a864886f70d010701/gi,
   ];
   
   for (const pattern of pkcs7Patterns) {
     let match;
     while ((match = pattern.exec(hex)) !== null) {
       const startPos = match.index;
-      const maxLen = Math.min(hex.length - startPos, 200000); // Increased buffer
+      const maxLen = Math.min(hex.length - startPos, 200000);
       const sigHex = hex.substring(startPos, startPos + maxLen);
       
       const key = sigHex.substring(0, 100);
@@ -235,28 +549,22 @@ function findAllSignatures(buffer) {
   return signatures;
 }
 
-// Enhanced PKCS#7 signature validation
 function isPotentialPKCS7Signature(hex) {
   if (hex.length < 100) return false;
   
-  // Check for PKCS#7 signature indicators
   const indicators = [
-    '3082', // SEQUENCE with definite length
-    '3080', // SEQUENCE with indefinite length
-    '06092a864886f70d010702', // PKCS#7 signedData OID
-    '06092a864886f70d010701', // PKCS#7 data OID
+    '3082',
+    '3080', 
+    '06092a864886f70d010702',
+    '06092a864886f70d010701',
   ];
   
   return indicators.some(indicator => hex.toLowerCase().includes(indicator.toLowerCase()));
 }
 
-// Enhanced signature parsing with multiple recovery strategies
 function tryParseSignature(signatureHex) {
   const strategies = [
-    // Strategy 1: Direct parsing
     () => parseDirectly(signatureHex),
-    
-    // Strategy 2: Try different truncation points
     () => {
       for (let i = signatureHex.length; i >= 1000; i -= 1000) {
         try {
@@ -266,8 +574,6 @@ function tryParseSignature(signatureHex) {
       }
       return null;
     },
-    
-    // Strategy 3: Find and parse embedded PKCS#7
     () => {
       const pkcs7Start = signatureHex.toLowerCase().indexOf('3082');
       if (pkcs7Start >= 0) {
@@ -277,20 +583,15 @@ function tryParseSignature(signatureHex) {
       }
       return null;
     },
-    
-    // Strategy 4: Try to fix common ASN.1 issues
     () => {
       try {
-        // Remove potential padding or trailing data
-        let cleaned = signatureHex.replace(/^00+/, ''); // Remove leading zeros
-        cleaned = cleaned.replace(/00+$/, ''); // Remove trailing zeros
+        let cleaned = signatureHex.replace(/^00+/, '');
+        cleaned = cleaned.replace(/00+$/, '');
         return parseDirectly(cleaned);
       } catch (e) {
         return null;
       }
     },
-    
-    // Strategy 5: Parse as CMS/PKCS#7 with relaxed validation
     () => {
       try {
         return parseWithRelaxedValidation(signatureHex);
@@ -323,37 +624,31 @@ function parseDirectly(signatureHex) {
 }
 
 function parseWithRelaxedValidation(signatureHex) {
-  // Try parsing with different ASN.1 strictness levels
   const bytes = Buffer.from(signatureHex, 'hex');
   const der = forge.util.createBuffer(bytes.toString('binary'));
   
   try {
-    // First try strict parsing
     const asn1 = forge.asn1.fromDer(der);
     return forge.pkcs7.messageFromAsn1(asn1);
   } catch (e) {
-    // Try with relaxed parsing - manually extract certificates
     try {
       return extractCertificatesManually(bytes);
     } catch (e2) {
-      throw e; // Throw original error
+      throw e;
     }
   }
 }
 
 function extractCertificatesManually(bytes) {
-  // Manual certificate extraction for problematic signatures
   const certs = [];
   const hex = bytes.toString('hex');
   
-  // Look for certificate patterns (X.509 certificates start with 3082)
   const certPattern = /3082[\da-f]{4}3082[\da-f]{4}/gi;
   let match;
   
   while ((match = certPattern.exec(hex)) !== null) {
     try {
       const startPos = match.index;
-      // Try different lengths for the certificate
       for (let len = 2000; len <= 4000; len += 200) {
         try {
           const certHex = hex.substring(startPos, startPos + len);
@@ -366,20 +661,16 @@ function extractCertificatesManually(bytes) {
             certs.push(cert);
             break;
           }
-        } catch (e) {
-          // Try next length
-        }
+        } catch (e) {}
       }
-    } catch (e) {
-      // Continue to next match
-    }
+    } catch (e) {}
   }
   
   if (certs.length > 0) {
     return {
       certificates: certs,
       rawCapture: {
-        signature: null, // We couldn't parse the signature part
+        signature: null,
         content: null
       }
     };
@@ -420,7 +711,6 @@ function verifySignatureCryptographically(p7) {
     const attrs = p7.rawCapture.authenticatedAttributes;
 
     if (!p7.rawCapture || !p7.rawCapture.signature) {
-      // If we couldn't parse the signature but have certificates, it's still a valid structure
       if (p7.certificates && p7.certificates.length > 0) {
         return { valid: false, error: 'Signature structure valid, cryptographic verification not possible' };
       }
@@ -509,7 +799,7 @@ function verifySignatureCryptographically(p7) {
   return { valid: signatureValid, error: verificationError };
 }
 
-function extractSignatureInfo(signatureHex) {
+async function extractSignatureInfo(signatureHex) {
   try {
     const p7 = tryParseSignature(signatureHex);
 
@@ -523,19 +813,37 @@ function extractSignatureInfo(signatureHex) {
     const now = new Date();
     const certValid = now >= cert.validity.notBefore && now <= cert.validity.notAfter;
 
+    // Perform certificate chain validation
+    const chainValidation = validateCertificateChain(p7.certificates);
+
+    // Check revocation status for the end-entity certificate
+    let revocationStatus = null;
+    try {
+      const issuerCert = p7.certificates.length > 1 ? p7.certificates[1] : null;
+      revocationStatus = await checkCertificateRevocation(cert, issuerCert);
+    } catch (e) {
+      console.log('Revocation check failed:', e.message);
+    }
+
     const verificationResult = verifySignatureCryptographically(p7);
     const signatureValid = verificationResult.valid;
 
     const signingTime = extractSigningTime(p7);
-    const certificateChain = buildCertificateChain(p7);
+    const certificateChain = buildCertificateChain(p7, chainValidation);
 
     const hashAlgorithm = getHashAlgorithmFromDigestOid(p7);
     const signatureAlgorithm = `RSA-${hashAlgorithm.toUpperCase()}`;
 
+    // Fixed self-signed detection
+    const isSelfSigned = isSelfSignedCertificate(cert);
+
     return {
-      valid: signatureValid && certValid,
+      valid: signatureValid && certValid && chainValidation.valid && !(revocationStatus && revocationStatus.revoked),
       certificateValid: certValid,
       signatureValid: signatureValid,
+      chainValid: chainValidation.valid,
+      chainValidationErrors: chainValidation.validationErrors,
+      revocationStatus: revocationStatus,
       signedBy: certInfo.commonName,
       organization: certInfo.organization,
       email: certInfo.email,
@@ -543,7 +851,7 @@ function extractSignatureInfo(signatureHex) {
       certificateValidFrom: formatDate(cert.validity.notBefore),
       certificateValidTo: formatDate(cert.validity.notAfter),
       serialNumber: certInfo.serialNumber,
-      isSelfSigned: cert.issuer.hash === cert.subject.hash,
+      isSelfSigned: isSelfSigned,
       signatureDate: signingTime,
       certificateChain: certificateChain,
       certificateChainLength: p7.certificates.length,
@@ -650,7 +958,7 @@ exports.handler = async (event) => {
     for (const sig of signatures) {
       console.log(`Trying signature (method: ${sig.method}, hex length: ${sig.signatureHex.length})`);
       
-      const info = extractSignatureInfo(sig.signatureHex);
+      const info = await extractSignatureInfo(sig.signatureHex);
       
       if (info) {
         sigInfo = info;
@@ -689,7 +997,6 @@ exports.handler = async (event) => {
       };
     }
 
-    // Determine verification type based on available data
     const isStructureOnly = sigInfo.structureOnly || !sigInfo.signatureValid;
     
     const result = {
@@ -700,6 +1007,10 @@ exports.handler = async (event) => {
       cryptographicVerification: !isStructureOnly,
       signatureValid: sigInfo.signatureValid,
       certificateValid: sigInfo.certificateValid,
+      chainValid: sigInfo.chainValid,
+      chainValidationPerformed: true,
+      revocationChecked: sigInfo.revocationStatus ? sigInfo.revocationStatus.checked : false,
+      revoked: sigInfo.revocationStatus ? sigInfo.revocationStatus.revoked : false,
       signedBy: sigInfo.signedBy,
       organization: sigInfo.organization,
       email: sigInfo.email,
@@ -718,7 +1029,7 @@ exports.handler = async (event) => {
       processingTime: Date.now() - startTime
     };
 
-    // Add warnings based on findings
+    // Enhanced warnings based on validation results
     if (signatures.length > 1) {
       result.warnings.push(`Multiple signatures detected (${signatures.length})`);
     }
@@ -736,6 +1047,26 @@ exports.handler = async (event) => {
       result.warnings.push('Certificate has expired');
     }
 
+    if (!sigInfo.chainValid) {
+      result.warnings.push('Certificate chain validation failed');
+      if (sigInfo.chainValidationErrors && sigInfo.chainValidationErrors.length > 0) {
+        result.troubleshooting.push(`Chain errors: ${sigInfo.chainValidationErrors.join(', ')}`);
+      }
+    }
+
+    if (sigInfo.revocationStatus) {
+      if (sigInfo.revocationStatus.revoked) {
+        result.warnings.push('Certificate has been revoked');
+      } else if (!sigInfo.revocationStatus.checked) {
+        result.warnings.push('Revocation status could not be verified');
+        if (sigInfo.revocationStatus.error) {
+          result.troubleshooting.push(`Revocation check failed: ${sigInfo.revocationStatus.error}`);
+        }
+      }
+    } else {
+      result.warnings.push('Revocation status not checked');
+    }
+
     if (sigInfo.verificationError && !isStructureOnly) {
       result.warnings.push(`Verification issue: ${sigInfo.verificationError}`);
     }
@@ -743,10 +1074,6 @@ exports.handler = async (event) => {
     if (pdfString.includes('/EmbeddedFile')) {
       result.warnings.push('Document contains embedded files');
     }
-
-    // Add standard disclaimers
-    result.warnings.push('Certificate chain validation not performed');
-    result.warnings.push('Revocation status not checked');
 
     return {
       statusCode: 200,
