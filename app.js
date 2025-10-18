@@ -1,4 +1,4 @@
-// Signsley - Enhanced Version with File Integrity, Multiple Signatures Sections, and Improved Status Display
+// Signsley - Enhanced Version with File Integrity, Multiple Signatures Sections, and Improved Status & Integrity Logic
 
 const uploadSection = document.getElementById('uploadSection');
 const fileInput = document.getElementById('fileInput');
@@ -158,27 +158,20 @@ async function sendVerificationRequest(endpoint, base64Data, fileName) {
     }
 }
 
-// Determine file integrity status
+// Strict integrity determination: do not infer intact
 function determineFileIntegrity(result) {
-    if (result.documentIntact !== undefined) {
-        return result.documentIntact;
+    if (typeof result.documentIntact === 'boolean') return result.documentIntact;
+    if (result.pdf && typeof result.pdf.lastSignatureCoversAllContent === 'boolean') {
+        return result.pdf.lastSignatureCoversAllContent;
     }
-    if (result.signatureValid === true && result.structureValid === true) {
-        return true;
+    if (result.pdf && typeof result.pdf.incrementalUpdates === 'number') {
+        return null;
     }
-    if (result.warnings) {
-        const modificationWarnings = result.warnings.some(w => 
-            w.toLowerCase().includes('modified') || 
-            w.toLowerCase().includes('altered') ||
-            w.toLowerCase().includes('tampered') ||
-            w.toLowerCase().includes('hash mismatch')
-        );
-        if (modificationWarnings) return false;
-    }
+    if (typeof result.referenceDigestMatch === 'boolean') return result.referenceDigestMatch;
+    if (typeof result.contentDigestMatch === 'boolean') return result.contentDigestMatch;
     return null;
 }
 
-// Multiple signatures
 function getSignaturesArray(result) {
     if (Array.isArray(result.signatures) && result.signatures.length > 0) {
         return result.signatures;
@@ -231,40 +224,27 @@ function renderSignatureCards(signatures) {
     let certChipColor = '#2c5f2d';
     let certChipText = 'Certificate: Valid';
     const certExpired = (sig.certificateValidTo && new Date(sig.certificateValidTo) < new Date());
-    if (sig.certificateValid === false && certExpired) {
-      certChipText = 'Certificate: Invalid & Expired';
-      certChipColor = '#c62828';
-    } else if (sig.certificateValid === true && certExpired) {
-      certChipText = 'Certificate: Valid but Expired';
-      certChipColor = '#f57c00';
-    } else if (sig.certificateValid === false) {
-      certChipText = 'Certificate: Invalid';
-      certChipColor = '#c62828';
-    } else if (certExpired) {
-      certChipText = 'Certificate: Expired';
-      certChipColor = '#f57c00';
-    }
+    if (sig.certificateValid === false && certExpired) { certChipText = 'Certificate: Invalid & Expired'; certChipColor = '#c62828'; }
+    else if (sig.certificateValid === true && certExpired) { certChipText = 'Certificate: Valid but Expired'; certChipColor = '#f57c00'; }
+    else if (sig.certificateValid === false) { certChipText = 'Certificate: Invalid'; certChipColor = '#c62828'; }
+    else if (certExpired) { certChipText = 'Certificate: Expired'; certChipColor = '#f57c00'; }
     statusChips += chip(certChipText, certChipColor);
 
     if (sig.chainValidationPerformed !== undefined) {
       statusChips += chip(sig.chainValid ? 'Chain: OK' : 'Chain: Issues', sig.chainValid ? '#2c5f2d' : '#f57c00');
     }
     if (sig.revocationChecked !== undefined) {
-      if (sig.revocationChecked && sig.revoked === true) {
-        statusChips += chip('Revocation: Revoked', '#c62828');
-      } else if (sig.revocationChecked && sig.revoked === false) {
-        statusChips += chip('Revocation: Not Revoked', '#2c5f2d');
-      } else {
-        statusChips += chip('Revocation: Not Checked', '#f57c00');
-      }
+      if (sig.revocationChecked && sig.revoked === true) { statusChips += chip('Revocation: Revoked', '#c62828'); }
+      else if (sig.revocationChecked && sig.revoked === false) { statusChips += chip('Revocation: Not Revoked', '#2c5f2d'); }
+      else { statusChips += chip('Revocation: Not Checked', '#f57c00'); }
     }
 
     const gridRow = (label, value) => {
       if (!value && value !== 0) return '';
-      return `<div style="display:grid;grid-template-columns:130px 1fr;gap:0.5rem;padding:0.25rem 0;border-bottom:1px solid var(--border);line-height:1.4;">
-        <div style="font-weight:500;color:var(--text-secondary);">${esc(label)}:</div>
-        <div style="color:var(--text);word-break:break-word;">${esc(String(value))}</div>
-      </div>`;
+      return `<div style=\"display:grid;grid-template-columns:130px 1fr;gap:0.5rem;padding:0.25rem 0;border-bottom:1px solid var(--border);line-height:1.4;\">`+
+        `<div style=\"font-weight:500;color:var(--text-secondary);\">${esc(label)}:</div>`+
+        `<div style=\"color:var(--text);word-break:break-word;\">${esc(String(value))}</div>`+
+      `</div>`;
     };
 
     const section =
@@ -289,7 +269,30 @@ function renderSignatureCards(signatures) {
   }).join('');
 }
 
+function extractMultipleSignatureInfo(result) {
+  let count = 1;
+  if (Array.isArray(result.signatures)) count = Math.max(count, result.signatures.length);
+  if (typeof result.signatureCount === 'number') count = Math.max(count, result.signatureCount);
+  if (result.warnings) {
+    for (const w of result.warnings) {
+      const m = w.match(/Multiple signatures detected\s*\((\d+)\)/i);
+      if (m) { count = Math.max(count, parseInt(m[1])); break; }
+    }
+  }
+  return { count };
+}
+
 function determineSignatureStatusEnhanced(result) {
+    const integrity = determineFileIntegrity(result);
+    if (integrity === false) {
+      return {
+        icon: '❌',
+        class: 'invalid',
+        title: 'Document Modified After Signing',
+        description: 'Changes were detected after the last signature; verification fails'
+      };
+    }
+
     const multipleSignatures = extractMultipleSignatureInfo(result);
     const hasMultipleSignatures = multipleSignatures.count > 1;
     
@@ -383,24 +386,6 @@ function determineSignatureStatusEnhanced(result) {
     }
 }
 
-function extractMultipleSignatureInfo(result) {
-    let count = 1;
-    if (result.warnings) {
-        for (const warning of result.warnings) {
-            const match = warning.match(/Multiple signatures detected \((\d+)\)/i);
-            if (match) {
-                count = parseInt(match[1]);
-                break;
-            }
-        }
-    }
-    if (Array.isArray(result.signatures)) {
-        count = Math.max(count, result.signatures.length);
-    }
-    return { count };
-}
-
-// Result display
 function displayResults(result) {
     if (!result) {
         showError('Invalid result');
@@ -416,7 +401,6 @@ function displayResults(result) {
 
     let html = '';
 
-    // File Integrity
     html += '<div class="integrity-section" style="margin-bottom: 1.5rem; padding: 1rem; background: var(--bg-secondary); border-radius: 8px; border-left: 4px solid ' + getIntegrityColor(integrityStatus) + ';">';
     html += '<div style="font-size: 0.875rem; font-weight: 600; color: var(--text); margin-bottom: 0.5rem;">🛡️ File Integrity Status</div>';
     if (integrityStatus === true) {
@@ -424,14 +408,20 @@ function displayResults(result) {
         html += '<div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.25rem;">The file has not been modified after signing</div>';
     } else if (integrityStatus === false) {
         html += '<div style="color: #c62828; font-weight: 500;">❌ Document Modified</div>';
-        html += '<div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.25rem;">The file appears to have been altered after signing</div>';
+        if (result.integrityReason) {
+            html += `<div style="font-size:0.8rem;color:var(--text-secondary);margin-top:0.25rem;">${esc(result.integrityReason)}</div>`;
+        }
+        if (result.pdf && typeof result.pdf.incrementalUpdates === 'number') {
+            html += `<div style="font-size:0.8rem;color:var(--text-secondary);margin-top:0.25rem;">PDF incremental updates: ${result.pdf.incrementalUpdates}</div>`;
+        }
     } else {
         html += '<div style="color: #f57c00; font-weight: 500;">⚠️ Integrity Unknown</div>';
-        html += '<div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.25rem;">Unable to determine if file was modified after signing</div>';
+        if (result.pdf && typeof result.pdf.incrementalUpdates === 'number') {
+            html += `<div style="font-size:0.8rem;color:var(--text-secondary);margin-top:0.25rem;">PDF incremental updates: ${result.pdf.incrementalUpdates}</div>`;
+        }
     }
     html += '</div>';
 
-    // Multiple signature summary
     const multipleSignatures = extractMultipleSignatureInfo(result);
     if (multipleSignatures.count > 1) {
         html += '<div class="signature-info-section" style="margin-bottom: 1.5rem; padding: 1rem; background: var(--bg-secondary); border-radius: 8px; border-left: 4px solid #2c5f2d;">';
@@ -441,7 +431,6 @@ function displayResults(result) {
         html += '</div>';
     }
 
-    // Per-signature cards
     const signatures = getSignaturesArray(result);
     if (signatures.length > 0) {
         html += renderSignatureCards(signatures);
@@ -492,7 +481,6 @@ function displayResults(result) {
     }
 
     add('Detection Method', result.detectionMethod);
-
     add('Details', result.details);
 
     if (result.troubleshooting && result.troubleshooting.length > 0) {
@@ -640,5 +628,5 @@ document.addEventListener('drop', (e) => {
 });
 
 console.log('Signsley Digital Signature Verification Tool - Enhanced Version Loaded');
-console.log('Version: 3.1 - Per-signature sections');
+console.log('Version: 3.2 - Strict integrity & per-signature sections');
 console.log('Supported file types:', CONFIG.SUPPORTED_EXTENSIONS.join(', '));
