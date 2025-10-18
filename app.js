@@ -513,6 +513,10 @@ function displayResults(result) {
   }
 
   addIfPresent('Detection', result.detectionMethod);
+	// Document integrity status
+	if (integrityMsg && !(result?.error === 'No digital signature detected')) {
+  	html += row('Document Integrity', `${integrityMsg.status} — ${integrityMsg.detail}`, integrityMsg.color);
+	}
 
   if (result.troubleshooting?.length > 0) {
     const tips = result.troubleshooting.slice(0, 3).map(t => `💡 ${esc(t)}`).join('<br>');
