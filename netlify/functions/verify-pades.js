@@ -60,6 +60,35 @@ function bytesFromHex(hex) {
   return Buffer.from(hex, 'hex');
 }
 
+// FIXED: Certificate validation at signing time vs current time
+function validateCertificateAtSigningTime(cert, signingTime = null) {
+  const now = new Date();
+  let validationDate = now;
+  
+  // Use signing time if available and valid
+  if (signingTime) {
+    try {
+      const sigDate = new Date(signingTime);
+      if (!isNaN(sigDate.getTime()) && sigDate <= now) {
+        validationDate = sigDate;
+        console.log(`Validating certificate at signing time: ${formatDate(sigDate)}`);
+      }
+    } catch (e) {
+      console.log(`Invalid signing time, using current date: ${e.message}`);
+    }
+  }
+  
+  const certValid = validationDate >= cert.validity.notBefore && validationDate <= cert.validity.notAfter;
+  const expiredNow = now > cert.validity.notAfter;
+  
+  return {
+    validAtSigningTime: certValid,
+    validNow: !expiredNow,
+    expiredSinceSigning: certValid && expiredNow,
+    validationDate: validationDate
+  };
+}
+
 // DER LENGTH CALCULATION AND VALIDATION
 function getDERLength(hexString) {
   try {
@@ -851,7 +880,8 @@ function verifySignatureCryptographically(p7, pdfBuffer, byteRange) {
   return { valid: signatureValid, error: verificationError, structureOnly: isStructureOnly };
 }
 
-function buildAndValidateCertificateChain(certificates) {
+// FIXED: Certificate chain validation using signing-time validation
+function buildAndValidateCertificateChain(certificates, signingTime = null) {
   const chainValidation = {
     valid: false, 
     validationErrors: [], 
@@ -936,11 +966,26 @@ function buildAndValidateCertificateChain(certificates) {
 
     let chainValid = true;
     const now = new Date();
+    
+    // FIXED: Use signing time for certificate validation when available
+    let validationDate = now;
+    if (signingTime) {
+      try {
+        const sigDate = new Date(signingTime);
+        if (!isNaN(sigDate.getTime()) && sigDate <= now) {
+          validationDate = sigDate;
+          console.log(`Chain validation using signing time: ${formatDate(sigDate)}`);
+        }
+      } catch (e) {
+        console.log(`Invalid signing time for chain validation: ${e.message}`);
+      }
+    }
 
     for (let i = 0; i < orderedChain.length; i++) {
       const cert = orderedChain[i];
 
-      if (now < cert.validity.notBefore || now > cert.validity.notAfter) {
+      // FIXED: Validate certificate at signing time, not current time
+      if (validationDate < cert.validity.notBefore || validationDate > cert.validity.notAfter) {
         const certInfo = extractCertificateInfo(cert);
         chainValidation.validationErrors.push(`Certificate expired: ${certInfo.commonName}`);
         if (!certInfo.commonName.includes('CA')) {
@@ -980,6 +1025,22 @@ function extractSigningTime(p7) {
         if (oid === forge.pki.oids.signingTime || oid === '1.2.840.113549.1.9.5') {
           const timeValue = attr.value[1].value[0].value;
           return formatDate(new Date(timeValue));
+        }
+      }
+    }
+  } catch {}
+  return null;
+}
+
+// FIXED: Extract raw signing time for certificate validation
+function extractRawSigningTime(p7) {
+  try {
+    if (p7.rawCapture && p7.rawCapture.authenticatedAttributes) {
+      for (let attr of p7.rawCapture.authenticatedAttributes) {
+        const oid = forge.asn1.derToOid(attr.value[0].value);
+        if (oid === forge.pki.oids.signingTime || oid === '1.2.840.113549.1.9.5') {
+          const timeValue = attr.value[1].value[0].value;
+          return new Date(timeValue);
         }
       }
     }
@@ -1293,6 +1354,7 @@ async function performCRLCheck(cert, crlUrl) {
   });
 }
 
+// FIXED: Enhanced signature info extraction with signing-time validation
 async function extractSignatureInfo(signatureHex, pdfBuffer, byteRange) {
   try {
     console.log(`\n=== DER-AWARE SIGNATURE EXTRACTION ===`);
@@ -1303,14 +1365,20 @@ async function extractSignatureInfo(signatureHex, pdfBuffer, byteRange) {
 
     console.log(`*** DER SUCCESS: PKCS#7 parsed with ${p7.certificates.length} certificates ***`);
 
-    const chainValidation = buildAndValidateCertificateChain(p7.certificates);
+    // FIXED: Extract raw signing time for validation
+    const rawSigningTime = extractRawSigningTime(p7);
+    const signingTime = extractSigningTime(p7);
+    
+    // FIXED: Pass signing time to chain validation
+    const chainValidation = buildAndValidateCertificateChain(p7.certificates, rawSigningTime);
     const cert = chainValidation.endEntity || p7.certificates[0];
     const certInfo = extractCertificateInfo(cert);
 
     console.log(`Signer certificate: CN="${certInfo.commonName}", O="${certInfo.organization}"`);
 
-    const now = new Date();
-    const certValid = now >= cert.validity.notBefore && now <= cert.validity.notAfter;
+    // FIXED: Use signing-time certificate validation
+    const certValidation = validateCertificateAtSigningTime(cert, rawSigningTime);
+    const certValid = certValidation.validAtSigningTime;
 
     let revocationStatus = null;
     try {
@@ -1347,7 +1415,6 @@ async function extractSignatureInfo(signatureHex, pdfBuffer, byteRange) {
       verificationResult.error = `${certInfo.commonName} signature validated with structure-only verification`;
     }
 
-    const signingTime = extractSigningTime(p7);
     const certificateChain = buildCertificateChain(p7, chainValidation);
     const hashAlgorithm = getHashAlgorithmFromDigestOid(p7);
     const signatureAlgorithm = `RSA-${hashAlgorithm.toUpperCase()}`;
@@ -1356,6 +1423,11 @@ async function extractSignatureInfo(signatureHex, pdfBuffer, byteRange) {
     return {
       valid: signatureValid && certValid && chainValidation.valid && !(revocationStatus && revocationStatus.revoked),
       certificateValid: certValid,
+      // FIXED: Add signing-time specific validation results
+      certificateValidAtSigning: certValidation.validAtSigningTime,
+      certificateExpiredSinceSigning: certValidation.expiredSinceSigning,
+      certificateValidNow: certValidation.validNow,
+      signingTimeUsed: signingTime,
       signatureValid: signatureValid,
       chainValid: chainValidation.valid,
       chainValidationErrors: chainValidation.validationErrors,
@@ -1408,7 +1480,7 @@ exports.handler = async (event) => {
     if (!pdfString.startsWith('%PDF-')) return { statusCode: 400, headers, body: JSON.stringify({ error: 'Not a valid PDF file', valid: false }) };
 
     console.log(`\n${'='.repeat(80)}`);
-    console.log(`DER-AWARE PROCESSING: ${fileName} (${buffer.length} bytes)`);
+    console.log(`FIXED DER-AWARE PROCESSING: ${fileName} (${buffer.length} bytes)`);
     console.log('='.repeat(80));
 
     const signatures = findAllSignatures(buffer);
@@ -1425,12 +1497,12 @@ exports.handler = async (event) => {
       };
     }
 
-    console.log(`\n*** FOUND ${signatures.length} POTENTIAL SIGNATURES FOR DER PROCESSING ***`);
+    console.log(`\n*** FOUND ${signatures.length} POTENTIAL SIGNATURES FOR FIXED PROCESSING ***`);
     let sigInfo = null, workingSig = null, parseAttempts = [];
 
     for (let i = 0; i < signatures.length; i++) {
       const sig = signatures[i];
-      console.log(`\n--- DER-AWARE PARSING ATTEMPT ${i + 1}/${signatures.length} ---`);
+      console.log(`\n--- FIXED PARSING ATTEMPT ${i + 1}/${signatures.length} ---`);
       console.log(`Method: ${sig.method}, Confidence: ${sig.confidence}, Length: ${sig.signatureHex.length}`);
       console.log(`PKCS#7 potential: ${isPotentialPKCS7Signature(sig.signatureHex)}`);
 
@@ -1438,17 +1510,18 @@ exports.handler = async (event) => {
       if (info) { 
         sigInfo = info; 
         workingSig = sig; 
-        console.log(`\n*** DER SUCCESS: Certificate extraction completed! ***`);
+        console.log(`\n*** FIXED SUCCESS: Certificate extraction completed! ***`);
         console.log(`Signer: ${info.signedBy}, Organization: ${info.organization}`);
+        console.log(`Certificate valid at signing: ${info.certificateValidAtSigning}, Expired since: ${info.certificateExpiredSinceSigning}`);
         break; 
       } else { 
         parseAttempts.push(sig.method);
-        console.log('DER parse attempt failed, trying next signature...');
+        console.log('FIXED parse attempt failed, trying next signature...');
       }
     }
 
     if (!sigInfo) {
-      console.log('\n*** ALL DER-AWARE PARSING ATTEMPTS FAILED ***');
+      console.log('\n*** ALL FIXED PARSING ATTEMPTS FAILED ***');
       return {
         statusCode: 200, headers,
         body: JSON.stringify({
@@ -1457,10 +1530,10 @@ exports.handler = async (event) => {
           fileName,
           structureValid: true, 
           cryptographicVerification: false, 
-          error: 'DER-aware signature parsing failed',
+          error: 'Fixed DER-aware signature parsing failed',
           warnings: [
             `Found ${signatures.length} signature structure(s)`, 
-            'Exhausted all DER-aware parsing strategies', 
+            'Exhausted all fixed DER-aware parsing strategies', 
             'Signature may have structural issues or use unsupported encoding'
           ],
           troubleshooting: [
@@ -1484,6 +1557,11 @@ exports.handler = async (event) => {
       cryptographicVerification: !isStructureOnly,
       signatureValid: sigInfo.signatureValid,
       certificateValid: sigInfo.certificateValid,
+      // FIXED: Add signing-time specific validation results
+      certificateValidAtSigning: sigInfo.certificateValidAtSigning,
+      certificateExpiredSinceSigning: sigInfo.certificateExpiredSinceSigning,
+      certificateValidNow: sigInfo.certificateValidNow,
+      signingTimeUsed: sigInfo.signingTimeUsed,
       chainValid: sigInfo.chainValid,
       chainValidationPerformed: true,
       revocationChecked: sigInfo.revocationStatus ? sigInfo.revocationStatus.checked : false,
@@ -1518,8 +1596,11 @@ exports.handler = async (event) => {
       result.warnings.push('Self-signed certificate detected');
     }
 
-    if (!sigInfo.certificateValid) {
-      result.warnings.push('Certificate has expired or is not yet valid');
+    // FIXED: Don't warn about expired certificates if they were valid at signing
+    if (!sigInfo.certificateValidAtSigning) {
+      result.warnings.push('Certificate was not valid at the time of signing');
+    } else if (sigInfo.certificateExpiredSinceSigning) {
+      result.warnings.push('Certificate has expired since signing (but was valid when document was signed)');
     }
 
     if (!sigInfo.chainValid && sigInfo.chainValidationErrors && sigInfo.chainValidationErrors.length > 0) {
@@ -1554,8 +1635,9 @@ exports.handler = async (event) => {
     }
 
     console.log(`\n${'='.repeat(80)}`);
-    console.log(`DER-AWARE VERIFICATION COMPLETE FOR: ${sigInfo.signedBy}`);
+    console.log(`FIXED DER-AWARE VERIFICATION COMPLETE FOR: ${sigInfo.signedBy}`);
     console.log(`Valid: ${result.valid}, Signature: ${result.signatureValid}, Chain: ${result.chainValid}`);
+    console.log(`Certificate valid at signing: ${result.certificateValidAtSigning}, Expired since: ${result.certificateExpiredSinceSigning}`);
     console.log(`Revocation checked: ${result.revocationChecked}, Method: ${workingSig.method}`);
     console.log('='.repeat(80));
 
