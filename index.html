@@ -126,7 +126,14 @@
       if(!toggle) return;
       const targetId = toggle.getAttribute('data-chain-toggle');
       const panel = document.getElementById(targetId);
-      if(panel){ panel.classList.toggle('show'); }
+      if(panel){ 
+        panel.classList.toggle('show');
+        if(panel.classList.contains('show')){
+          panel.style.display = 'block';
+        } else {
+          panel.style.display = 'none';
+        }
+      }
     });
   </script>
 </body>

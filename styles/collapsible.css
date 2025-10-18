@@ -1,5 +1,50 @@
-/* Signsley styles additions for collapsible chains */
-.signature-card .chain-toggle{cursor:pointer;display:inline-flex;align-items:center;gap:6px;color:#2196f3;font-weight:600}
-.signature-card .chain-toggle:hover{text-decoration:underline}
-.signature-card .chain-panel{display:none;margin-top:0.5rem;padding:0.75rem;background:var(--bg-secondary);border-radius:8px;border-left:4px solid #2196f3}
-.signature-card .chain-panel.show{display:block}
+/* Signsley collapsible certificate chains */
+.chain-toggle {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #2196f3;
+  font-weight: 600;
+  font-size: 0.875rem;
+  user-select: none;
+}
+
+.chain-toggle:hover {
+  text-decoration: underline;
+  color: #1976d2;
+}
+
+.chain-panel {
+  display: none;
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  background: var(--bg);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  font-size: 0.8125rem;
+}
+
+.chain-panel.show {
+  display: block;
+}
+
+/* Ensure signature cards have proper spacing */
+.signature-card {
+  margin-bottom: 1rem;
+  padding: 0.9rem;
+  background: var(--bg-secondary);
+  border-radius: 10px;
+  position: relative;
+}
+
+@media (max-width: 640px) {
+  .chain-panel {
+    padding: 0.5rem;
+    font-size: 0.75rem;
+  }
+  
+  .chain-toggle {
+    font-size: 0.8125rem;
+  }
+}
