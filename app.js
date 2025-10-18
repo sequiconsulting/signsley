@@ -1,5 +1,5 @@
 // Signsley - Full App Wiring, Security-first Integrity, and Processing Pipeline
-// v3.7
+// v3.8 - Fixed Certificate Expiration vs Document Integrity
 
 // DOM references
 const uploadSection = document.getElementById('uploadSection');
@@ -119,61 +119,150 @@ async function sendVerificationRequest(endpoint, base64Data, fileName) {
   }
 }
 
-// ================= SECURITY-FIRST INTEGRITY (from v3.6) =================
+// ================= FIXED: SECURITY-FIRST INTEGRITY =================
+// CRITICAL FIX: Separate document integrity from certificate expiration
 function determineFileIntegrityEnhanced(result) {
+  // First check explicit document integrity markers
   if (typeof result.documentIntact === 'boolean') return result.documentIntact;
   if (result.fileName && result.fileName.toLowerCase().includes('tamper')) return false;
+  
+  // Check PDF-specific integrity markers
   if (result.format && result.format.includes('PAdES') && result.pdf) {
-    if (typeof result.pdf.lastSignatureCoversAllContent === 'boolean') return result.pdf.lastSignatureCoversAllContent;
-    if (typeof result.pdf.incrementalUpdates === 'number' && result.pdf.incrementalUpdates > 2) return false;
+    if (typeof result.pdf.lastSignatureCoversAllContent === 'boolean') 
+      return result.pdf.lastSignatureCoversAllContent;
+    if (typeof result.pdf.incrementalUpdates === 'number' && result.pdf.incrementalUpdates > 2) 
+      return false;
   }
+  
+  // Check cryptographic digest matches (independent of certificate status)
   if (typeof result.referenceDigestMatch === 'boolean') return result.referenceDigestMatch;
   if (typeof result.contentDigestMatch === 'boolean') return result.contentDigestMatch;
-  const fullCryptoOK = result.cryptographicVerification === true;
+  
+  // FIXED: Separate signature cryptographic validity from certificate trust
+  const cryptoValid = result.cryptographicVerification === true;
   const sigValid = result.signatureValid === true;
   const structValid = result.structureValid === true;
-  const chainValid = result.chainValid === true;
-  const notRevoked = result.revoked === false;
-  const revocationChecked = result.revocationChecked === true;
-  const certValid = result.certificateValid === true;
-  if (fullCryptoOK && sigValid && structValid && chainValid && revocationChecked && notRevoked && certValid) return true;
-  if (result.signatureValid === false || result.structureValid === false || result.revoked === true || result.certificateValid === false) return false;
-  return null;
+  
+  // Document integrity should NOT depend on certificate expiration or chain validity
+  // Only check if signature was tampered with or structure is corrupted
+  if (sigValid === false || structValid === false || result.revoked === true) return false;
+  
+  // If cryptographic verification passed, document is intact regardless of cert status
+  if (cryptoValid && sigValid && structValid) return true;
+  
+  return null; // Unknown integrity - cannot determine definitively
 }
 
+// FIXED: Enhanced integrity status messages
 function getIntegrityStatusMessage(integrityStatus, result) {
-  if (integrityStatus === true) return { status: '✅ Document Intact', detail: 'Full cryptographic verification confirms document is unchanged', color: '#2c5f2d' };
-  if (integrityStatus === false) return { status: '❌ Document Modified', detail: 'Document was altered after signing', color: '#c62828' };
+  if (integrityStatus === true) {
+    return { 
+      status: '✅ Document Intact', 
+      detail: 'Cryptographic verification confirms document is unchanged since signing', 
+      color: '#2c5f2d' 
+    };
+  }
+  
+  if (integrityStatus === false) {
+    return { 
+      status: '❌ Document Modified', 
+      detail: 'Document content was altered after digital signature was applied', 
+      color: '#c62828' 
+    };
+  }
+  
+  // Enhanced unknown status with specific reasons
   const reasons = [];
   if (result.cryptographicVerification !== true) reasons.push('cryptographic verification incomplete');
-  if (result.chainValid !== true) reasons.push('certificate chain unverified');
-  if (result.revocationChecked !== true) reasons.push('revocation status unknown');
-  if (result.isSelfSigned === true) reasons.push('self-signed certificate');
+  if (result.signatureValid === null) reasons.push('signature validation inconclusive');
+  if (!result.chainValidationPerformed) reasons.push('certificate chain not verified');
+  
+  // FIXED: Don't treat expired certificates as integrity issues
+  if (result.certificateExpiredSinceSigning === true) {
+    return { 
+      status: '✅ Document Intact (Certificate Expired)', 
+      detail: 'Document unchanged since signing, but certificate has expired since then', 
+      color: '#f57c00' 
+    };
+  }
+  
   const reasonText = reasons.length ? ` (${reasons.join(', ')})` : '';
-  return { status: '⚠️ Integrity Unknown', detail: `Cannot definitively verify document integrity${reasonText}`, color: '#f57c00' };
+  return { 
+    status: '⚠️ Integrity Unknown', 
+    detail: `Cannot definitively verify document integrity${reasonText}`, 
+    color: '#f57c00' 
+  };
 }
 
-// ================= SIGNATURE STATUS (with integrity override) =================
+// ================= FIXED: SIGNATURE STATUS =================
 function determineSignatureStatusWithIntegrityOverride(result) {
   const integrity = determineFileIntegrityEnhanced(result);
+  
+  // Document modified - highest priority
   if (integrity === false) {
-    return { icon: '❌', class: 'invalid', title: 'Document Modified - Signatures Invalid', description: 'Document was altered after signing, invalidating all signatures' };
+    return { 
+      icon: '❌', 
+      class: 'invalid', 
+      title: 'Document Modified - Signatures Invalid', 
+      description: 'Document was altered after signing, invalidating all signatures' 
+    };
   }
+  
   const multi = extractMultipleSignatureInfo(result);
   const multiFlag = multi.count > 1;
   const hasWarnings = result.warnings && result.warnings.filter(w => !w.toLowerCase().includes('multiple signatures detected')).length > 0;
   const isStructureOnly = !result.cryptographicVerification;
-  const chainOK = result.chainValid;
+  
+  const sigOK = result.signatureValid === true;
+  const certValidAtSigning = result.certificateValidAtSigning !== false;
+  const certExpiredSince = result.certificateExpiredSinceSigning === true;
+  const chainOK = result.chainValid !== false;
   const revOK = !result.revoked;
+  
+  // FIXED: Separate expired certificates from invalid ones
+  if (sigOK && certValidAtSigning && chainOK && revOK && certExpiredSince) {
+    return { 
+      icon: '⏰', 
+      class: 'expired', 
+      title: multiFlag ? 'Valid Signatures - Certificate Expired' : 'Valid Signature - Certificate Expired', 
+      description: multiFlag ? 
+        'Document integrity verified. Signatures were valid when created but certificates have since expired.' :
+        'Document integrity verified. Signature was valid when created but certificate has since expired.' 
+    };
+  }
+  
+  // FIXED: Certificate was never valid (even at signing time)
+  if (sigOK && !certValidAtSigning) {
+    return { 
+      icon: '❌', 
+      class: 'invalid', 
+      title: 'Invalid Certificate', 
+      description: multiFlag ? 
+        'Signatures are cryptographically valid but certificates were not valid at signing time' :
+        'Signature is cryptographically valid but certificate was not valid at signing time' 
+    };
+  }
+  
+  // Document integrity unknown but signature structure exists
+  if (integrity === null && sigOK) {
+    return { 
+      icon: '⚠️', 
+      class: 'warning', 
+      title: 'Signature Present - Integrity Unknown', 
+      description: 'Cannot definitively verify document integrity due to incomplete validation data' 
+    };
+  }
+  
+  // Fallback to original logic for other cases
   const certOK = result.certificateValid;
-  const sigOK = result.signatureValid;
   const certExp = result.certificateExpired || (result.certificateValidTo && new Date(result.certificateValidTo) < new Date());
+  
   if (result.valid && sigOK && certOK && chainOK && revOK && !certExp) {
     const base = multiFlag ? 'Multiple Signatures Verified Successfully' : 'Signature Verified Successfully';
     return { icon: hasWarnings ? '⚠️' : '✅', class: hasWarnings ? 'warning' : 'valid', title: hasWarnings ? `${base} (with warnings)` : base, description: multiFlag ? `All ${multi.count} signatures are valid and current` : 'All signature components are valid and current' };
   }
   if (sigOK && certOK && chainOK && !revOK) return { icon: '🚫', class: 'invalid', title: 'Certificate Revoked', description: multiFlag ? 'Signatures are valid but one or more certificates have been revoked' : 'Signature is valid but certificate has been revoked' };
-  if (sigOK && chainOK && certExp) return { icon: '⏰', class: 'expired', title: multiFlag ? 'Valid Signatures - Certificate Expired' : 'Valid Signature - Certificate Expired', description: multiFlag ? 'Signatures were valid when created but one or more certificates have expired' : 'Signature was valid when created but certificate has expired' };
+  if (sigOK && chainOK && certExp && !certExpiredSince) return { icon: '⏰', class: 'expired', title: multiFlag ? 'Valid Signatures - Certificate Expired' : 'Valid Signature - Certificate Expired', description: multiFlag ? 'Signatures were valid when created but one or more certificates have expired' : 'Signature was valid when created but certificate has expired' };
   if (sigOK && certOK && chainOK && revOK) return { icon: '✅', class: 'valid', title: multiFlag ? 'Multiple Signatures Verified Successfully' : 'Signature Verified Successfully', description: multiFlag ? `All ${multi.count} signature components are valid` : 'All signature components are valid' };
   if (result.structureValid && sigOK && certOK && chainOK) return { icon: '✅', class: 'valid', title: multiFlag ? 'Multiple Signatures Verified Successfully' : 'Signature Verified Successfully', description: multiFlag ? 'All signature structures and certificates are valid' : 'Signature structure and certificates are valid' };
   if (result.structureValid && isStructureOnly) return { icon: '📋', class: 'info', title: multiFlag ? 'Multiple Signature Structures Valid' : 'Signature Structure Valid', description: multiFlag ? 'Document contains multiple valid signature structures - cryptographic validation not performed' : 'Document structure verified - cryptographic validation not performed' };
@@ -333,4 +422,4 @@ function hideError() { errorMessage && errorMessage.classList.remove('show'); }
 function row(label, value, color = null) { const style = color ? ` style=\"color: ${color}; font-weight: 500;\"` : ''; return `<div class=\"detail-row\"><div class=\"detail-label\">${esc(label)}:</div><div class=\"detail-value\"${style}>${value}</div></div>`; }
 function esc(text) { if (!text) return ''; const div = document.createElement('div'); div.textContent = text.toString(); return div.innerHTML; }
 
-console.log('Signsley - v3.7 Full pipeline restored with security-first integrity');
+console.log('Signsley - v3.8 Fixed Certificate Expiration vs Document Integrity');
