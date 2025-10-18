@@ -1,4 +1,4 @@
-// Signsley v4.1 - Optimized with UTC timestamp
+// Signsley v4.1 - Fixed integrity detection logic
 const uploadSection = document.getElementById('uploadSection');
 const fileInput = document.getElementById('fileInput');
 const browseBtn = document.getElementById('browseBtn');
@@ -196,32 +196,31 @@ function formatUTCTimestamp(isoString) {
   }
 }
 
+// FIXED: Corrected file integrity detection logic
+
 function determineFileIntegrityEnhanced(result) {
+  // No signature detected
   if (result?.error === 'No digital signature detected') return null;
-  if (!result?.structureValid && result?.error === 'No digital signature detected') return null;
-
+  
+  // Backend explicitly states integrity (trust it)
   if (typeof result.documentIntact === 'boolean') return result.documentIntact;
-  if (result.fileName?.toLowerCase().includes('tamper')) return false;
-
-  if (result.format?.includes('PAdES') && result.pdf) {
-    if (typeof result.pdf.lastSignatureCoversAllContent === 'boolean') {
-      return result.pdf.lastSignatureCoversAllContent;
-    }
-    if (typeof result.pdf.incrementalUpdates === 'number' && result.pdf.incrementalUpdates > 2) {
-      return false;
-    }
-  }
-
+  
+  // Hash digest match from backend (authoritative)
   if (typeof result.referenceDigestMatch === 'boolean') return result.referenceDigestMatch;
   if (typeof result.contentDigestMatch === 'boolean') return result.contentDigestMatch;
 
-  const cryptoValid = result.cryptographicVerification === true;
-  const sigValid = result.signatureValid === true;
-  const structValid = result.structureValid === true;
-
-  if (sigValid === false || structValid === false || result.revoked === true) return false;
-  if (cryptoValid && sigValid && structValid) return true;
-
+  // Core integrity check: cryptographic hash verification
+  const cryptoPerformed = result.cryptographicVerification === true;
+  const hashMatches = result.signatureValid === true;
+  
+  // If hash verification was performed
+  if (cryptoPerformed) {
+    // Hash matches → document intact
+    // Hash doesn't match → document modified
+    return hashMatches;
+  }
+  
+  // Crypto verification not performed → cannot determine
   return null;
 }
 
@@ -260,7 +259,7 @@ function getIntegrityStatusMessage(integrityStatus, result) {
 
   return {
     status: '⚠️ Integrity Unknown',
-    detail: 'Cannot definitively verify integrity',
+    detail: 'Cannot definitively verify integrity - structure-only verification',
     color: '#f57c00'
   };
 }
