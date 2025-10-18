@@ -1,15 +1,18 @@
 {
   "name": "signsley",
-  "version": "3.0.0",
-  "description": "Digital Signature Verification Service",
+  "version": "3.1.0",
+  "description": "Digital Signature Verification Service - Enhanced",
   "scripts": {
     "dev": "netlify dev",
-    "deploy": "netlify deploy --prod"
+    "deploy": "netlify deploy --prod",
+    "test": "node test/test-signatures.js"
   },
   "dependencies": {
     "node-forge": "^1.3.1",
     "@xmldom/xmldom": "^0.8.10",
-    "xpath": "^0.0.32"
+    "xpath": "^0.0.32",
+    "asn1js": "^3.0.5",
+    "pkijs": "^3.0.15"
   },
   "devDependencies": {
     "netlify-cli": "^17.36.4"
@@ -19,45 +22,4 @@
   },
   "license": "MIT"
 }
-```
 
-## 🗑️ File da ELIMINARE
-
-Elimina questi file dal repository:
-```
-# Documentazione ridondante
-START_HERE.md
-QUICKSTART.md
-PROJECT_SUMMARY.md
-DEPLOYMENT_CHECKLIST.md
-ARCHITECTURE.txt
-PADES_ENHANCEMENT_NOTES.md
-CHANGELOG.md
-
-# CSS frammentati
-styles/mobile-compact.css
-styles/modern-theme.css
-styles/center-howitworks.css
-styles/app.css
-styles/main.css
-
-# Test non necessari
-test/fixtures/sample-data.js
-test/unit/pdf-parser.test.js
-test/integration/pades-verification.test.js
-test/security/malformed-input.test.js
-test/security/injection-prevention.test.js
-test/jest.config.js
-test/setup.js
-
-# File helper non necessari
-netlify/functions/verify-pades-inject.js
-netlify/functions/helpers/enrich-result.js
-netlify/functions/helpers/cert-tech.js
-netlify/functions/verify-pades.patch
-netlify/functions/cert-validation-config.js
-
-# Altri file inutili
-digital-signature-verifier.html
-public/init-mobile-css.js
-.nvmrc

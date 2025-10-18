@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles/styles.css">
 </head>
 <body>
   <div class="container">
@@ -30,7 +30,7 @@
 
     <main class="main">
       <div class="upload-card">
-        <div class="upload-area" id="uploadArea">
+        <div class="upload-area" id="uploadSection">
           <input type="file" id="fileInput" hidden accept=".pdf,.xml,.p7m,.p7s,.sig">
           <svg class="upload-icon" width="48" height="48" viewBox="0 0 48 48" fill="none">
             <rect x="8" y="8" width="32" height="32" rx="8" fill="#F0FDF4"/>
@@ -48,28 +48,26 @@
 
         <div class="loading" id="loading">
           <div class="spinner"></div>
-          <span>Verifying signature...</span>
+          <span class="loading-text">Verifying signature...</span>
         </div>
 
         <div class="results" id="results">
           <div class="result-header">
-            <div class="result-status" id="resultStatus"></div>
-            <h3 id="resultTitle"></h3>
+            <div class="result-icon" id="resultIcon"></div>
+            <div>
+              <h3 id="resultTitle"></h3>
+            </div>
           </div>
-          <div class="result-content">
-            <div class="info-grid" id="infoGrid"></div>
-            <div class="certificate-chain" id="certificateChain"></div>
-            <div class="warnings" id="warnings"></div>
-          </div>
+          <div id="resultDetails"></div>
         </div>
 
-        <div class="error" id="error"></div>
+        <div class="error-message" id="errorMessage"></div>
       </div>
     </main>
 
     <footer class="footer">
       <p>Your files are processed securely and never stored.</p>
-      <p>© 2025 Signsley · <a href="https://github.com/yourusername/signsley" target="_blank">GitHub</a></p>
+      <p>© 2025 <a href="https://www.greensley.eu" target="_blank" rel="noopener">Greensley</a></p>
     </footer>
   </div>
 

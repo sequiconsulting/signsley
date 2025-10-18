@@ -1,6 +1,5 @@
-// Signsley Digital Signature Verification App - Enhanced Version v8
+// Signsley - Enhanced Version with Improved PAdES Support
 
-// DOM Elements
 const uploadSection = document.getElementById('uploadSection');
 const fileInput = document.getElementById('fileInput');
 const browseBtn = document.getElementById('browseBtn');
@@ -11,170 +10,29 @@ const resultTitle = document.getElementById('resultTitle');
 const resultDetails = document.getElementById('resultDetails');
 const errorMessage = document.getElementById('errorMessage');
 
-// Ensure initial UI is clean
 document.addEventListener('DOMContentLoaded', () => {
     try { hideLoading(); hideError(); } catch (e) {}
 });
 
-// Enhanced Configuration
 const CONFIG = {
-    MAX_FILE_SIZE: 6 * 1024 * 1024, // 6MB
-    REQUEST_TIMEOUT: 45000, // Increased to 45 seconds for complex files
-    PROGRESS_UPDATE_INTERVAL: 3000, // Update progress every 3 seconds
-    SUPPORTED_EXTENSIONS: ['pdf', 'xml', 'p7m', 'p7s', 'sig'],
-    SUPPORTED_MIME_TYPES: [
-        'application/pdf',
-        'application/xml', 
-        'text/xml',
-        'application/pkcs7-mime',
-        'application/x-pkcs7-mime',
-        'application/pkcs7-signature',
-        'application/x-pkcs7-signature'
-    ]
+    MAX_FILE_SIZE: 6 * 1024 * 1024,
+    REQUEST_TIMEOUT: 60000, // Increased timeout for complex signatures
+    SUPPORTED_EXTENSIONS: ['pdf', 'xml', 'p7m', 'p7s', 'sig']
 };
 
-// Enhanced file validation
 function validateFile(file) {
-    if (!file) {
-        throw new Error('No file selected');
+    if (!file) throw new Error('No file selected');
+    if (file.size === 0) throw new Error('File is empty');
+    if (file.size > CONFIG.MAX_FILE_SIZE) throw new Error('File too large (max 6MB)');
+    
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (!CONFIG.SUPPORTED_EXTENSIONS.includes(ext)) {
+        throw new Error('Unsupported file type. Supported: PDF, XML, P7M, P7S, SIG');
     }
-    
-    // Check file size
-    if (file.size === 0) {
-        throw new Error('The selected file is empty. Please choose a valid file.');
-    }
-    
-    if (file.size > CONFIG.MAX_FILE_SIZE) {
-        const sizeMB = (CONFIG.MAX_FILE_SIZE / (1024 * 1024)).toFixed(1);
-        throw new Error(`File is too large. Maximum size allowed is ${sizeMB}MB.`);
-    }
-    
-    // Check file extension
-    const fileName = file.name.toLowerCase();
-    const extension = fileName.split('.').pop();
-    
-    if (!extension || !CONFIG.SUPPORTED_EXTENSIONS.includes(extension)) {
-        throw new Error(`Unsupported file type. Please upload files with these extensions: ${CONFIG.SUPPORTED_EXTENSIONS.join(', ')}`);
-    }
-    
-    // Check MIME type (if available)
-    if (file.type && !CONFIG.SUPPORTED_MIME_TYPES.includes(file.type)) {
-        console.warn(`Unexpected MIME type: ${file.type}`);
-    }
-    
     return true;
 }
 
-// Enhanced error categorization with timeout handling
-function categorizeError(error) {
-    const message = error.message || error.toString();
-    
-    if (message.includes('timeout') || message.includes('Request timeout') || message.includes('Processing timeout')) {
-        return {
-            title: 'Processing Timeout',
-            message: 'The file is taking too long to process. This commonly happens with Purchase Order files containing large attachments. Please try again, or use Adobe Acrobat for complex signatures.',
-            type: 'warning',
-            suggestions: [
-                'Try saving the PDF without embedded attachments',
-                'Use Adobe Acrobat Reader for verification',
-                'Contact support if this is a critical business document',
-                'Consider using a different signature verification tool'
-            ]
-        };
-    }
-    
-    if (message.includes('too large') || message.includes('size')) {
-        return {
-            title: 'File Too Large',
-            message: 'The selected file exceeds the maximum size limit of 6MB. Please choose a smaller file.',
-            type: 'warning'
-        };
-    }
-    
-    if (message.includes('Unsupported file type') || message.includes('format')) {
-        return {
-            title: 'Unsupported Format',
-            message: 'Please upload a PDF document, XML file, or digital signature file (.p7m, .p7s, .sig).',
-            type: 'info'
-        };
-    }
-    
-    if (message.includes('empty') || message.includes('No file')) {
-        return {
-            title: 'Invalid File',
-            message: 'The selected file appears to be empty or corrupted. Please choose a different file.',
-            type: 'warning'
-        };
-    }
-    
-    if (message.includes('network') || message.includes('fetch')) {
-        return {
-            title: 'Connection Error',
-            message: 'Unable to connect to the verification service. Please check your internet connection and try again.',
-            type: 'error'
-        };
-    }
-    
-    if (message.includes('Server verification failed')) {
-        return {
-            title: 'Server Error',
-            message: 'The verification service encountered an error. Please try again in a few minutes.',
-            type: 'error'
-        };
-    }
-    
-    if (message.includes('signature structure') || message.includes('extraction')) {
-        return {
-            title: 'Complex Signature Detected',
-            message: 'This file contains a complex signature that requires specialized processing. This often occurs with Purchase Order files containing embedded attachments.',
-            type: 'warning',
-            suggestions: [
-                'The file likely contains valid signatures but in a complex format',
-                'Try using Adobe Acrobat for full verification',
-                'Consider saving the PDF without attachments and try again',
-                'Contact the document sender for a simpler version'
-            ]
-        };
-    }
-    
-    // Default error
-    return {
-        title: 'Verification Error',
-        message: `Unable to verify the signature: ${message}`,
-        type: 'error'
-    };
-}
-
-// Memory cleanup helper
-function cleanupMemory() {
-    // Clear any large variables
-    if (window.gc && typeof window.gc === 'function') {
-        try {
-            window.gc();
-        } catch (e) {
-            // Ignore GC errors
-        }
-    }
-}
-
-// Format date to YYYY/MM/DD
-function formatDate(dateString) {
-    if (!dateString || dateString === 'Unknown') return 'Unknown';
-    try {
-        const date = new Date(dateString);
-        if (isNaN(date.getTime())) return dateString;
-        
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const day = String(date.getDate()).padStart(2, '0');
-        
-        return `${year}/${month}/${day}`;
-    } catch (e) {
-        return dateString;
-    }
-}
-
-// Enhanced drag and drop handling
+// Event listeners remain the same
 uploadSection.addEventListener('dragover', (e) => {
     e.preventDefault();
     uploadSection.classList.add('dragover');
@@ -188,27 +46,15 @@ uploadSection.addEventListener('dragleave', (e) => {
 uploadSection.addEventListener('drop', (e) => {
     e.preventDefault();
     uploadSection.classList.remove('dragover');
-    
-    const files = e.dataTransfer.files;
-    if (files.length > 1) {
-        showError('Please drop only one file at a time.');
-        return;
-    }
-    
-    if (files.length > 0) {
-        handleFile(files[0]);
+    if (e.dataTransfer.files.length > 0) {
+        handleFile(e.dataTransfer.files[0]);
     }
 });
 
-uploadSection.addEventListener('click', () => {
-    if (!fileInput) { showError('File picker unavailable. Please reload the page.','error'); return; }
-    fileInput.click();
-});
-
+uploadSection.addEventListener('click', () => fileInput.click());
 browseBtn.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!fileInput) { showError('File picker unavailable. Please reload the page.','error'); return; }
     fileInput.click();
 });
 
@@ -218,374 +64,243 @@ fileInput.addEventListener('change', (e) => {
     }
 });
 
-// Enhanced file handling with progressive loading messages
 async function handleFile(file) {
     hideError();
     hideResults();
     
-    let arrayBuffer = null;
-    let base64Data = null;
-    
     try {
-        // Validate file first
         validateFile(file);
+        showLoading('Processing signature...');
         
-        showLoading('Preparing file...');
-        
-        // Convert file to ArrayBuffer with progress
-        arrayBuffer = await fileToArrayBuffer(file);
-        
-        showLoading('Converting file...');
-        
-        // Convert to base64 with chunking for large files
-        base64Data = await arrayBufferToBase64(arrayBuffer);
-        
-        showLoading('Determining file type...');
-        
-        // Determine endpoint based on file analysis
+        const arrayBuffer = await fileToArrayBuffer(file);
+        const base64Data = await arrayBufferToBase64(arrayBuffer);
         const endpoint = determineEndpoint(file, arrayBuffer);
         
-        // Check if this is a potentially problematic file
-        const isPotentiallyComplex = file.name.toLowerCase().includes('purchase order') || 
-                                   file.name.toLowerCase().includes('attach') || 
-                                   file.size > 1024 * 1024;
-        
-        if (isPotentiallyComplex) {
-            showLoading('Processing complex signature (this may take up to 45 seconds)...');
-        } else {
-            showLoading('Verifying signature...');
-        }
-        
-        // Send request with enhanced timeout and progress updates
-        const result = await sendVerificationRequestWithProgress(endpoint, base64Data, file.name, isPotentiallyComplex);
+        const result = await sendVerificationRequest(endpoint, base64Data, file.name);
         
         hideLoading();
         displayResults(result);
         
     } catch (error) {
-        console.error('File processing error:', error);
+        console.error('Error:', error);
         hideLoading();
-        
-        const categorizedError = categorizeError(error);
-        showEnhancedError(categorizedError);
-        
-    } finally {
-        // Cleanup memory
-        arrayBuffer = null;
-        base64Data = null;
-        cleanupMemory();
+        showError(error.message || 'Verification failed');
     }
 }
 
-// Convert file to ArrayBuffer with error handling
 function fileToArrayBuffer(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
-        
-        reader.onload = () => {
-            if (reader.result) {
-                resolve(reader.result);
-            } else {
-                reject(new Error('Failed to read file'));
-            }
-        };
-        
-        reader.onerror = () => {
-            reject(new Error('Error reading file: ' + (reader.error?.message || 'Unknown error')));
-        };
-        
-        reader.onabort = () => {
-            reject(new Error('File reading was aborted'));
-        };
-        
-        try {
-            reader.readAsArrayBuffer(file);
-        } catch (e) {
-            reject(new Error('Failed to start reading file: ' + e.message));
-        }
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error('Failed to read file'));
+        reader.readAsArrayBuffer(file);
     });
 }
 
-// Enhanced base64 conversion with chunking
 async function arrayBufferToBase64(buffer) {
-    if (!buffer || buffer.byteLength === 0) {
-        throw new Error('Invalid or empty buffer');
-    }
-    
     const bytes = new Uint8Array(buffer);
     let binary = '';
-    const chunkSize = 0x8000; // 32KB chunks
+    const chunkSize = 0x8000;
     
-    try {
-        for (let i = 0; i < bytes.length; i += chunkSize) {
-            const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
-            binary += String.fromCharCode.apply(null, chunk);
-            
-            // Yield for large files
-            if (i % (chunkSize * 4) === 0) {
-                await new Promise(resolve => setTimeout(resolve, 0));
-            }
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+        const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
+        binary += String.fromCharCode.apply(null, chunk);
+        if (i % (chunkSize * 4) === 0) {
+            await new Promise(resolve => setTimeout(resolve, 0));
         }
-        
-        return btoa(binary);
-    } catch (e) {
-        throw new Error('Failed to convert file to base64: ' + e.message);
     }
-}
-
-// Enhanced endpoint determination
-function determineEndpoint(file, arrayBuffer) {
-    const fileExtension = file.name.split('.').pop().toLowerCase();
     
-    switch (fileExtension) {
-        case 'pdf':
-            return '/.netlify/functions/verify-pades';
-        case 'xml':
-            return '/.netlify/functions/verify-xades';
-        case 'p7m':
-        case 'p7s':
-        case 'sig':
-            return '/.netlify/functions/verify-cades';
-        default:
-            // Analyze file content for unknown extensions
-            const uint8Array = new Uint8Array(arrayBuffer.slice(0, 1000));
-            const dataString = new TextDecoder('utf-8', { fatal: false }).decode(uint8Array);
-            
-            if (dataString.includes('%PDF')) {
-                return '/.netlify/functions/verify-pades';
-            } else if (dataString.includes('<?xml') || dataString.includes('<')) {
-                return '/.netlify/functions/verify-xades';
-            } else {
-                return '/.netlify/functions/verify-cades';
-            }
-    }
+    return btoa(binary);
 }
 
-// Enhanced verification request with progress updates
-async function sendVerificationRequestWithProgress(endpoint, base64Data, fileName, isComplex = false) {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => {
-        controller.abort();
-    }, CONFIG.REQUEST_TIMEOUT);
+function determineEndpoint(file, arrayBuffer) {
+    const ext = file.name.split('.').pop().toLowerCase();
+    
+    if (ext === 'pdf') return '/.netlify/functions/verify-pades';
+    if (ext === 'xml') return '/.netlify/functions/verify-xades';
+    if (['p7m', 'p7s', 'sig'].includes(ext)) return '/.netlify/functions/verify-cades';
+    
+    const uint8 = new Uint8Array(arrayBuffer.slice(0, 1000));
+    const str = new TextDecoder('utf-8', { fatal: false }).decode(uint8);
+    
+    if (str.includes('%PDF')) return '/.netlify/functions/verify-pades';
+    if (str.includes('<?xml') || str.includes('<')) return '/.netlify/functions/verify-xades';
+    return '/.netlify/functions/verify-cades';
+}
 
-    // Setup progress updates for complex files
-    let progressUpdateId = null;
-    if (isComplex) {
-        let progressStep = 0;
-        const progressMessages = [
-            'Analyzing signature structure...',
-            'Extracting certificate information...',
-            'Parsing complex signature data...',
-            'Validating certificate chain...',
-            'Performing final verification...',
-            'Almost complete...'
-        ];
-        
-        progressUpdateId = setInterval(() => {
-            if (progressStep < progressMessages.length) {
-                showLoading(progressMessages[progressStep]);
-                progressStep++;
-            }
-        }, CONFIG.PROGRESS_UPDATE_INTERVAL);
-    }
+async function sendVerificationRequest(endpoint, base64Data, fileName) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), CONFIG.REQUEST_TIMEOUT);
 
     try {
         const response = await fetch(endpoint, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                fileData: base64Data,
-                fileName: fileName
-            }),
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fileData: base64Data, fileName: fileName }),
             signal: controller.signal
         });
 
         clearTimeout(timeoutId);
-        if (progressUpdateId) {
-            clearInterval(progressUpdateId);
-        }
 
         if (!response.ok) {
-            let errorMessage = `Server error: ${response.status} ${response.statusText}`;
-            
-            try {
-                const errorData = await response.json();
-                if (errorData.error || errorData.message) {
-                    errorMessage = errorData.error || errorData.message;
-                }
-            } catch (jsonError) {
-                // Use default error message
-            }
-            
-            throw new Error(errorMessage);
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.error || `Server error: ${response.status}`);
         }
 
-        const result = await response.json();
-        
-        if (!result) {
-            throw new Error('Invalid response from server');
-        }
-        
-        return result;
+        return await response.json();
 
-    } catch (fetchError) {
+    } catch (error) {
         clearTimeout(timeoutId);
-        if (progressUpdateId) {
-            clearInterval(progressUpdateId);
+        if (error.name === 'AbortError') {
+            throw new Error('Request timeout - complex signature may require Adobe Reader');
         }
-        
-        if (fetchError.name === 'AbortError') {
-            throw new Error('Processing timeout - the file may contain complex signatures or large attachments. Please try again or use specialized verification software.');
-        }
-        
-        if (fetchError.message.includes('fetch')) {
-            throw new Error('Network error - please check your internet connection.');
-        }
-        
-        throw fetchError;
+        throw error;
     }
 }
 
-// Enhanced results display with XSS prevention
 function displayResults(result) {
     if (!result) {
-        showError('Invalid verification result');
+        showError('Invalid result');
         return;
     }
     
-    // Determine result status
+    const hasWarnings = result.warnings && result.warnings.length > 0;
+    const isStructureOnly = !result.cryptographicVerification;
+    
     if (result.valid) {
-        resultIcon.textContent = result.warnings && result.warnings.length > 0 ? '⚠️' : '✓';
-        resultIcon.className = 'result-icon ' + (result.warnings && result.warnings.length > 0 ? 'warning' : 'valid');
-        resultTitle.textContent = result.warnings && result.warnings.length > 0 ? 'Signature Valid (with warnings)' : 'Signature Valid';
+        resultIcon.textContent = hasWarnings ? '⚠️' : '✓';
+        resultIcon.className = 'result-icon ' + (hasWarnings ? 'warning' : 'valid');
+        resultTitle.textContent = hasWarnings ? 'Valid (with warnings)' : 'Valid Signature';
+    } else if (result.structureValid) {
+        resultIcon.textContent = isStructureOnly ? '📋' : '⚠️';
+        resultIcon.className = 'result-icon ' + (isStructureOnly ? 'info' : 'warning');
+        resultTitle.textContent = isStructureOnly ? 'Signature Structure Detected' : 'Signature Detected';
     } else {
         resultIcon.textContent = '✗';
         resultIcon.className = 'result-icon invalid';
-        resultTitle.textContent = result.structureValid ? 'Structure Valid (Signature Not Verified)' : 'Invalid or No Signature';
+        resultTitle.textContent = 'No Valid Signature';
     }
     
-    // Build details HTML with sanitization
-    let detailsHTML = '';
+    let html = '';
     
-    // Add error information with enhanced formatting
     if (result.error) {
-        detailsHTML += createDetailRow('Error', escapeHtml(result.error));
+        const errorClass = isStructureOnly ? 'info' : 'warning';
+        html += row('Status', esc(result.error), isStructureOnly ? '#2196f3' : '#f57c00');
     }
     
-    // Add basic information
-    detailsHTML += createDetailRow('File Name', escapeHtml(result.fileName));
-    detailsHTML += createDetailRow('Format', escapeHtml(result.format));
+    html += row('File', esc(result.fileName));
+    html += row('Format', esc(result.format));
     
-    // Add processing time
     if (result.processingTime) {
-        detailsHTML += createDetailRow('Processing Time', `${result.processingTime}ms`);
+        html += row('Processing', `${result.processingTime}ms`);
     }
     
-    // Add verification type
     if (result.cryptographicVerification !== undefined) {
-        const verificationStatus = result.cryptographicVerification 
-            ? '✓ Full Cryptographic Verification' 
-            : '⚠️ Structure Validation Only';
-        const statusColor = result.cryptographicVerification ? '#2c5f2d' : '#f57c00';
-        
-        detailsHTML += createDetailRow('Verification Type', verificationStatus, statusColor);
+        const status = result.cryptographicVerification ? '✓ Full Verification' : '📋 Structure Analysis';
+        const color = result.cryptographicVerification ? '#2c5f2d' : '#2196f3';
+        html += row('Verification', status, color);
     }
 
-    // Add signature status
-    if (result.signatureValid !== undefined && result.signatureValid !== null) {
-        const statusText = result.signatureValid ? '✓ Valid' : '✗ Invalid';
-        const statusColor = result.signatureValid ? '#2c5f2d' : '#c62828';
-        detailsHTML += createDetailRow('Signature Status', statusText, statusColor);
+    if (result.signatureValid !== null && result.signatureValid !== undefined) {
+        html += row('Signature', result.signatureValid ? '✓ Valid' : '✗ Invalid', 
+                    result.signatureValid ? '#2c5f2d' : '#c62828');
     }
 
-    // Add structure status
     if (result.structureValid !== undefined) {
-        const statusText = result.structureValid ? '✓ Valid' : '✗ Invalid';
-        const statusColor = result.structureValid ? '#2c5f2d' : '#c62828';
-        detailsHTML += createDetailRow('Structure Status', statusText, statusColor);
+        html += row('Structure', result.structureValid ? '✓ Valid' : '✗ Invalid',
+                    result.structureValid ? '#2c5f2d' : '#c62828');
     }
 
-    // Add certificate status
     if (result.certificateValid !== undefined) {
-        const statusText = result.certificateValid ? '✓ Valid' : '✗ Expired/Invalid';
-        const statusColor = result.certificateValid ? '#2c5f2d' : '#c62828';
-        detailsHTML += createDetailRow('Certificate Status', statusText, statusColor);
+        html += row('Certificate', result.certificateValid ? '✓ Valid' : '⚠️ Issues',
+                    result.certificateValid ? '#2c5f2d' : '#f57c00');
     }
 
-    // Add signature details
-    addDetailIfExists('Signature Type', result.signatureType);
-    addDetailIfExists('Signed By', result.signedBy);
-    addDetailIfExists('Organization', result.organization);
-    addDetailIfExists('Email', result.email);
-    addDetailIfExists('Signature Date', result.signatureDate || result.signingTime);
-    addDetailIfExists('Algorithm', result.signatureAlgorithm);
-    addDetailIfExists('Certificate Issuer', result.certificateIssuer);
-    addDetailIfExists('Certificate Valid From', result.certificateValidFrom);
-    addDetailIfExists('Certificate Valid To', result.certificateValidTo);
-    addDetailIfExists('Serial Number', result.serialNumber);
+    add('Signature Type', result.signatureType);
+    add('Signed By', result.signedBy);
+    add('Organization', result.organization);
+    add('Email', result.email);
+    add('Date', result.signatureDate || result.signingTime);
+    add('Algorithm', result.signatureAlgorithm);
+    add('Issuer', result.certificateIssuer);
+    add('Valid From', result.certificateValidFrom);
+    add('Valid To', result.certificateValidTo);
+    add('Serial', result.serialNumber);
     
-    // Add chain information
-    if (result.certificateChainLength !== undefined) {
-        detailsHTML += createDetailRow('Certificate Chain', `${result.certificateChainLength} certificate(s)`);
+    if (result.certificateChainLength) {
+        html += row('Chain', `${result.certificateChainLength} certificate(s)`);
     }
 
     if (result.isSelfSigned !== undefined) {
-        detailsHTML += createDetailRow('Self-Signed', result.isSelfSigned ? 'Yes' : 'No');
+        html += row('Self-Signed', result.isSelfSigned ? 'Yes' : 'No');
     }
     
-    // Add additional details
-    addDetailIfExists('Details', result.details);
+    if (result.detectionMethod) {
+        html += row('Detection', result.detectionMethod);
+    }
     
-    // Add warnings
+    add('Details', result.details);
+    
     if (result.warnings && result.warnings.length > 0) {
-        const warningsText = result.warnings.map(w => '• ' + escapeHtml(w)).join('<br>');
-        detailsHTML += createDetailRow('Warnings', warningsText, '#f57c00');
+        html += row('Warnings', result.warnings.map(w => '• ' + esc(w)).join('<br>'), '#f57c00');
     }
     
-    // Add troubleshooting information if available
     if (result.troubleshooting && result.troubleshooting.length > 0) {
-        const troubleshootingText = result.troubleshooting.map(t => '• ' + escapeHtml(t)).join('<br>');
-        detailsHTML += createDetailRow('Troubleshooting Tips', troubleshootingText, '#2196f3');
+        html += row('Recommendations', result.troubleshooting.map(t => '• ' + esc(t)).join('<br>'), '#2196f3');
     }
     
-    // Helper function to add detail if exists
-    function addDetailIfExists(label, value) {
+    // Certificate Chain Details (at bottom)
+    if (result.certificateChain && result.certificateChain.length > 0) {
+        html += '<div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 2px solid var(--border);"></div>';
+        html += '<div style="font-size: 0.875rem; font-weight: 600; color: var(--text); margin-bottom: 0.75rem;">📜 Certificate Chain Details</div>';
+        
+        result.certificateChain.forEach((cert, idx) => {
+            html += '<div style="margin-bottom: 1rem; padding: 0.75rem; background: var(--bg-secondary); border-radius: 8px; font-size: 0.8125rem;">';
+            html += `<div style="font-weight: 600; color: var(--primary); margin-bottom: 0.5rem;">Certificate #${cert.position}</div>`;
+            html += certRow('Subject', cert.subject);
+            html += certRow('Issuer', cert.issuer);
+            html += certRow('Serial', cert.serialNumber);
+            html += certRow('Valid From', cert.validFrom);
+            html += certRow('Valid To', cert.validTo);
+            html += certRow('Key Algorithm', cert.publicKeyAlgorithm);
+            html += certRow('Key Size', cert.keySize + ' bits');
+            html += certRow('Self-Signed', cert.isSelfSigned ? 'Yes' : 'No');
+            html += '</div>';
+        });
+    }
+    
+    function certRow(label, value) {
+        return `<div style="display: grid; grid-template-columns: 100px 1fr; gap: 0.5rem; padding: 0.25rem 0; border-bottom: 1px solid var(--border); line-height: 1.4;">
+            <div style="font-weight: 500; color: var(--text-secondary);">${esc(label)}:</div>
+            <div style="color: var(--text); word-break: break-word;">${esc(value)}</div>
+        </div>`;
+    }
+    
+    function add(label, value) {
         if (value && value !== 'Unknown') {
-            detailsHTML += createDetailRow(label, escapeHtml(value));
+            html += row(label, esc(value));
         }
     }
     
-    resultDetails.innerHTML = detailsHTML;
+    resultDetails.innerHTML = html;
     results.classList.add('show');
 }
 
-// Helper function to create detail rows
-function createDetailRow(label, value, color = null) {
-    const colorStyle = color ? ` style="color: ${color}; font-weight: 500;"` : '';
-    return `
-        <div class="detail-row">
-            <div class="detail-label">${escapeHtml(label)}:</div>
-            <div class="detail-value"${colorStyle}>${value}</div>
-        </div>
-    `;
+function row(label, value, color = null) {
+    const style = color ? ` style="color: ${color}; font-weight: 500;"` : '';
+    return `<div class="detail-row"><div class="detail-label">${esc(label)}:</div><div class="detail-value"${style}>${value}</div></div>`;
 }
 
-// Enhanced XSS prevention
-function escapeHtml(text) {
+function esc(text) {
     if (!text) return '';
     const div = document.createElement('div');
     div.textContent = text.toString();
     return div.innerHTML;
 }
 
-// Enhanced loading display with status
-function showLoading(status = 'Processing...') {
-    const loadingText = loading.querySelector('.loading-text');
-    if (loadingText) {
-        loadingText.textContent = status;
-    }
+function showLoading(text = 'Processing...') {
+    const el = loading.querySelector('.loading-text');
+    if (el) el.textContent = text;
     loading.classList.add('show');
 }
 
@@ -597,36 +312,18 @@ function hideResults() {
     results.classList.remove('show');
 }
 
-// Enhanced error display with suggestions
-function showEnhancedError(categorizedError) {
-    let errorHTML = `<div class="error-main">${categorizedError.message}</div>`;
-    
-    if (categorizedError.suggestions && categorizedError.suggestions.length > 0) {
-        errorHTML += '<div class="error-suggestions">';
-        errorHTML += '<strong>Suggestions:</strong><ul>';
-        categorizedError.suggestions.forEach(suggestion => {
-            errorHTML += `<li>${escapeHtml(suggestion)}</li>`;
-        });
-        errorHTML += '</ul></div>';
-    }
-    
-    errorMessage.innerHTML = errorHTML;
-    errorMessage.className = `error-message ${categorizedError.type} show`;
-}
-
-// Backward compatibility for simple error display
-function showError(message, type = 'error') {
-    showEnhancedError({
-        message: message,
-        type: type
-    });
+function showError(message) {
+    errorMessage.innerHTML = `
+        <div class="error-main">${esc(message)}</div>
+        <div class="error-sub">For advanced signatures, try Adobe Acrobat Reader for full verification.</div>
+    `;
+    errorMessage.className = 'error-message error show';
 }
 
 function hideError() {
     errorMessage.classList.remove('show');
 }
 
-// Add keyboard accessibility
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
         hideError();
@@ -634,7 +331,3 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
-// Add window unload cleanup
-window.addEventListener('beforeunload', () => {
-    cleanupMemory();
-});
