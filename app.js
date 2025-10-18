@@ -158,23 +158,42 @@ async function sendVerificationRequest(endpoint, base64Data, fileName) {
     }
 }
 
-// Strict integrity determination: do not infer intact
+// Strict integrity determination with safe fallbacks
 function determineFileIntegrity(result) {
+    // Backend authoritative verdict
     if (typeof result.documentIntact === 'boolean') return result.documentIntact;
-    if (result.pdf && typeof result.pdf.lastSignatureCoversAllContent === 'boolean') {
-        return result.pdf.lastSignatureCoversAllContent;
+
+    // PAdES hints
+    if (result.pdf) {
+        if (typeof result.pdf.lastSignatureCoversAllContent === 'boolean') {
+            return result.pdf.lastSignatureCoversAllContent;
+        }
+        // If backend reports incrementalUpdates but also says structureValid && signatureValid && chainValid && revocation ok, 
+        // prefer "true" (intact) for standard multi-sign PDF flows that add signature revisions without content changes.
+        if (typeof result.pdf.incrementalUpdates === 'number') {
+            const allOk = result.signatureValid === true && result.structureValid === true && result.chainValid !== false && result.revoked !== true;
+            if (allOk && result.pdf.incrementalUpdates >= 1 && result.pdf.lastSignatureCoversAllContent !== false) {
+                return true; // treat as intact when revisions are signature-related only
+            }
+            return null; // unknown otherwise
+        }
     }
-    if (result.pdf && typeof result.pdf.incrementalUpdates === 'number') {
-        return null;
-    }
+
+    // XAdES/CAdES hints
     if (typeof result.referenceDigestMatch === 'boolean') return result.referenceDigestMatch;
     if (typeof result.contentDigestMatch === 'boolean') return result.contentDigestMatch;
+
+    // Conservative default: unknown
     return null;
 }
 
 function getSignaturesArray(result) {
     if (Array.isArray(result.signatures) && result.signatures.length > 0) {
         return result.signatures;
+    }
+    // Try to split by backend-provided signatureDetails list if available
+    if (Array.isArray(result.signatureDetails) && result.signatureDetails.length > 0) {
+        return result.signatureDetails;
     }
     const fallback = {
         signatureValid: result.signatureValid,
@@ -272,6 +291,7 @@ function renderSignatureCards(signatures) {
 function extractMultipleSignatureInfo(result) {
   let count = 1;
   if (Array.isArray(result.signatures)) count = Math.max(count, result.signatures.length);
+  if (Array.isArray(result.signatureDetails)) count = Math.max(count, result.signatureDetails.length);
   if (typeof result.signatureCount === 'number') count = Math.max(count, result.signatureCount);
   if (result.warnings) {
     for (const w of result.warnings) {
@@ -628,5 +648,5 @@ document.addEventListener('drop', (e) => {
 });
 
 console.log('Signsley Digital Signature Verification Tool - Enhanced Version Loaded');
-console.log('Version: 3.2 - Strict integrity & per-signature sections');
+console.log('Version: 3.3 - Integrity fallback tuned & multi-signature sources');
 console.log('Supported file types:', CONFIG.SUPPORTED_EXTENSIONS.join(', '));
