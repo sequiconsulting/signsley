@@ -1,0 +1,9 @@
+/* CSS tweaks for compact detail rows on mobile */
+.detail-row { display:flex; align-items:center; gap:8px; padding:6px 0; }
+.detail-row .detail-label { flex:0 0 140px; color:#555; font-weight:500; line-height:1.2; }
+.detail-row .detail-value { flex:1; line-height:1.2; word-break:break-word; }
+@media(max-width:480px){
+  .detail-row { padding:4px 0; gap:6px; }
+  .detail-row .detail-label { flex:0 0 110px; font-size:0.95rem; }
+  .detail-row .detail-value { font-size:0.95rem; }
+}
