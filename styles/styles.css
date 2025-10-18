@@ -1,8 +1,6 @@
-/* Compact Professional Design */
 :root {
   --primary: #10B981;
   --primary-dark: #059669;
-  --primary-light: #D1FAE5;
   --primary-bg: #F0FDF4;
   --danger: #EF4444;
   --warning: #F59E0B;
@@ -14,8 +12,8 @@
   --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
   --shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
   --shadow-lg: 0 20px 25px -5px rgb(0 0 0 / 0.1);
-  --radius: 12px;
-  --radius-lg: 16px;
+  --radius: 10px;
+  --radius-lg: 14px;
 }
 
 * {
@@ -29,18 +27,17 @@ body {
   background: linear-gradient(to bottom, #F0FDF4 0%, #FFFFFF 100%);
   color: var(--text);
   min-height: 100vh;
-  line-height: 1.4;
+  line-height: 1.5;
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
 }
 
 .container {
-  max-width: 800px;
+  max-width: 780px;
   margin: 0 auto;
   padding: 1.5rem 1rem;
 }
 
-/* Header */
 .header {
   text-align: center;
   margin-bottom: 2rem;
@@ -67,7 +64,6 @@ body {
   font-size: 0.875rem;
 }
 
-/* Upload Card */
 .upload-card {
   background: var(--bg);
   border-radius: var(--radius-lg);
@@ -140,14 +136,12 @@ body {
   color: var(--text-secondary);
 }
 
-/* Loading */
 .loading {
   display: none;
   padding: 2rem;
   text-align: center;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
   gap: 0.75rem;
 }
 
@@ -173,7 +167,6 @@ body {
   font-size: 0.875rem;
 }
 
-/* Results - Compact */
 .results {
   display: none;
   padding: 1.5rem;
@@ -234,51 +227,52 @@ body {
   font-weight: 600;
 }
 
-/* Detail Rows - Compact */
+/* Compact single-line detail rows */
 .detail-row {
-  display: grid;
-  grid-template-columns: 160px 1fr;
-  gap: 0.75rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
   padding: 0.5rem 0;
   border-bottom: 1px solid var(--bg-secondary);
   font-size: 0.875rem;
-  line-height: 1.4;
+  line-height: 1.5;
 }
 
 .detail-label {
   font-weight: 600;
   color: var(--text-secondary);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .detail-value {
   color: var(--text);
+  text-align: right;
   word-break: break-word;
 }
 
-/* Integrity Section */
 .integrity-section {
-  margin-bottom: 1.5rem;
-  padding: 1rem;
+  margin-bottom: 1.25rem;
+  padding: 0.9rem 1rem;
   background: var(--bg-secondary);
-  border-radius: 8px;
+  border-radius: var(--radius);
   border-left: 4px solid;
 }
 
-/* Signature Info Section */
 .signature-info-section {
-  margin-bottom: 1.5rem;
-  padding: 1rem;
+  margin-bottom: 1.25rem;
+  padding: 0.9rem 1rem;
   background: var(--bg-secondary);
-  border-radius: 8px;
+  border-radius: var(--radius);
   border-left: 4px solid #2c5f2d;
 }
 
-/* Signature Cards */
 .signature-card {
   margin-bottom: 1rem;
   padding: 0.9rem;
   background: var(--bg-secondary);
-  border-radius: 10px;
+  border-radius: var(--radius);
   border-left: 4px solid;
   box-shadow: var(--shadow-sm);
 }
@@ -289,7 +283,6 @@ body {
   font-size: 0.9rem;
 }
 
-/* Certificate Chain Styles */
 .chain-toggle {
   cursor: pointer;
   display: inline-flex;
@@ -300,6 +293,7 @@ body {
   font-size: 0.875rem;
   user-select: none;
   padding: 0.5rem 0;
+  transition: color 0.2s;
 }
 
 .chain-toggle:hover {
@@ -312,16 +306,40 @@ body {
   margin-top: 0.75rem;
   padding: 0.75rem;
   background: var(--bg);
-  border-radius: 8px;
+  border-radius: var(--radius);
   border: 1px solid var(--border);
   font-size: 0.8125rem;
+  animation: slideDown 0.2s ease;
 }
 
 .chain-panel.show {
   display: block;
 }
 
-/* Error Message */
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.chain-panel > div {
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  background: var(--bg-secondary);
+  border-radius: var(--radius);
+  font-size: 0.8125rem;
+  border-left: 4px solid;
+}
+
+.chain-panel > div:last-child {
+  margin-bottom: 0;
+}
+
 .error-message {
   display: none;
   margin: 1.5rem;
@@ -369,25 +387,6 @@ body {
   opacity: 0.9;
 }
 
-.error-suggestions {
-  margin-top: 0.75rem;
-}
-
-.error-suggestions strong {
-  display: block;
-  margin-bottom: 0.375rem;
-}
-
-.error-suggestions ul {
-  margin-left: 1.25rem;
-  margin-top: 0.375rem;
-}
-
-.error-suggestions li {
-  margin-bottom: 0.2rem;
-}
-
-/* Footer - Compact */
 .footer {
   text-align: center;
   margin-top: 2rem;
@@ -411,7 +410,6 @@ body {
   text-decoration: underline;
 }
 
-/* Mobile */
 @media (max-width: 640px) {
   body {
     font-size: 13px;
@@ -427,8 +425,13 @@ body {
   }
   
   .detail-row {
-    grid-template-columns: 1fr;
-    gap: 0.2rem;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25rem;
+  }
+  
+  .detail-value {
+    text-align: left;
   }
   
   .detail-label {
