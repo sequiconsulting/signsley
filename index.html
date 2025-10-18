@@ -13,7 +13,7 @@
   <div class="container">
     <header class="header">
       <div class="logo">
-        <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+        <svg width="32" height="32" viewBox="0 0 32  32" fill="none">
           <rect width="32" height="32" rx="8" fill="url(#gradient)"/>
           <path d="M22 10L14 18L10 14" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
           <defs>
@@ -70,6 +70,56 @@
       <p>© 2025 <a href="https://www.greensley.eu" target="_blank" rel="noopener">Greensley</a></p>
     </footer>
   </div>
+
+  <script>
+  (function(){
+    const uploadSection = document.getElementById('uploadSection');
+    const fileInput = document.getElementById('fileInput');
+    const browseBtn = document.getElementById('browseBtn');
+
+    // Guard if elements missing
+    if(!uploadSection || !fileInput || !browseBtn) return;
+
+    // Clicks
+    uploadSection.addEventListener('click', (e)=>{
+      // Avoid clicking when user clicks the button (handled separately)
+      if((e.target && e.target.id === 'browseBtn') || (e.target && e.target.closest && e.target.closest('#browseBtn'))) return;
+      fileInput.click();
+    });
+
+    browseBtn.addEventListener('click', (e)=>{
+      e.preventDefault();
+      e.stopPropagation();
+      fileInput.click();
+    });
+
+    // Drag & drop
+    ['dragenter','dragover'].forEach(evt=>{
+      uploadSection.addEventListener(evt, (e)=>{
+        e.preventDefault();
+        e.stopPropagation();
+        uploadSection.classList.add('dragover');
+      });
+    });
+
+    ;['dragleave','drop'].forEach(evt=>{
+      uploadSection.addEventListener(evt, (e)=>{
+        e.preventDefault();
+        e.stopPropagation();
+        if(evt==='drop'){
+          const dt = e.dataTransfer;
+          if(dt && dt.files && dt.files.length){
+            const f = dt.files[0];
+            const changeEvt = new Event('change');
+            Object.defineProperty(fileInput, 'files', { value: dt.files, writable: false });
+            fileInput.dispatchEvent(changeEvt);
+          }
+        }
+        uploadSection.classList.remove('dragover');
+      });
+    });
+  })();
+  </script>
 
   <script src="app.js"></script>
 </body>
