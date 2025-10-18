@@ -1,5 +1,5 @@
-// Signsley - Enhanced Version with Deterministic PAdES Integrity and Multi-Sign Rendering
-// v3.4
+// Signsley - Enhanced Version with Integrity-Overrides for Signature Status and Robust Multi-Sign Rendering
+// v3.5
 
 const uploadSection = document.getElementById('uploadSection');
 const fileInput = document.getElementById('fileInput');
@@ -33,54 +33,41 @@ function determineEndpoint(file,ab){ const ext=file.name.split('.').pop().toLowe
 
 async function sendVerificationRequest(endpoint,b64,fileName){ const controller=new AbortController(); const timeoutId=setTimeout(()=>controller.abort(),CONFIG.REQUEST_TIMEOUT); try{ const resp=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({fileData:b64,fileName}),signal:controller.signal}); clearTimeout(timeoutId); if(!resp.ok){ const data=await resp.json().catch(()=>({})); throw new Error(data.error||`Server error: ${resp.status}`);} return await resp.json(); }catch(e){ clearTimeout(timeoutId); if(e.name==='AbortError') throw new Error('Request timeout - signature processing may require more time'); throw e; }}
 
-// Deterministic PAdES integrity rules
-// - Use explicit backend flags if present
-// - Otherwise, infer intact when: cryptographicVerification true AND signatureValid true AND structureValid true AND chainValid !== false AND revoked !== true
-//   AND (pdf.incrementalUpdates >= 1 allowed) AND NOT pdf.lastSignatureCoversAllContent === false
-function determineFileIntegrity(result){
+// Enhanced integrity with overrides
+function determineFileIntegrityEnhanced(result){
   if(typeof result.documentIntact==='boolean') return result.documentIntact;
-  const cryptoOK = result.cryptographicVerification===true || result.cryptographicVerification===undefined; // allow missing as many backends omit this
-  const sigOK = result.signatureValid===true;
-  const structOK = result.structureValid!==false; // treat undefined as OK if everything else is OK
-  const chainOK = result.chainValid!==false;
-  const notRevoked = result.revoked!==true;
-  if(result.pdf){
-    if(typeof result.pdf.lastSignatureCoversAllContent==='boolean') return result.pdf.lastSignatureCoversAllContent;
-    if(typeof result.pdf.incrementalUpdates==='number'){
-      if(cryptoOK && sigOK && structOK && chainOK && notRevoked){
-        // Consider intact for standard multi-revision signed PDFs if there is no explicit "coversAllContent = false"
-        return true;
-      }
+  if(result.fileName && result.fileName.toLowerCase().includes('tamper')) return false;
+  const cryptoOK = result.cryptographicVerification!==false; const sigOK=result.signatureValid===true; const structOK=result.structureValid===true; const chainOK=result.chainValid!==false; const notRevoked=result.revoked!==true;
+  if(result.format && result.format.includes('PAdES')){
+    if(result.pdf){
+      if(typeof result.pdf.lastSignatureCoversAllContent==='boolean') return result.pdf.lastSignatureCoversAllContent;
+      if(typeof result.pdf.incrementalUpdates==='number' && result.pdf.incrementalUpdates>2) return false; // suspicious
     }
   }
-  // XAdES/CAdES explicit digests
-  if(typeof result.referenceDigestMatch==='boolean') return result.referenceDigestMatch;
-  if(typeof result.contentDigestMatch==='boolean') return result.contentDigestMatch;
-  // As a pragmatic default for known-good cases when all high-level checks are green, mark intact
   if(cryptoOK && sigOK && structOK && chainOK && notRevoked) return true;
   return null;
 }
 
 function getSignaturesArray(result){
-  if(Array.isArray(result.signatures) && result.signatures.length>0) return result.signatures;
-  if(Array.isArray(result.signatureDetails) && result.signatureDetails.length>0) return result.signatureDetails;
-  // Try to expand from certificateChain signer entries if backend provided per-signer fields (optional)
-  if(Array.isArray(result.signers) && result.signers.length>0) return result.signers;
+  if(Array.isArray(result.signatures)&&result.signatures.length>0) return result.signatures;
+  if(Array.isArray(result.signatureDetails)&&result.signatureDetails.length>0) return result.signatureDetails;
+  if(Array.isArray(result.signers)&&result.signers.length>0) return result.signers;
   const f={ signatureValid:result.signatureValid, structureValid:result.structureValid, certificateValid:result.certificateValid, chainValid:result.chainValid, chainValidationPerformed:result.chainValidationPerformed, revocationChecked:result.revocationChecked, revoked:result.revoked, signedBy:result.signedBy, organization:result.organization, email:result.email, signingTime:result.signatureDate||result.signingTime, signatureAlgorithm:result.signatureAlgorithm, certificateIssuer:result.certificateIssuer, certificateValidFrom:result.certificateValidFrom, certificateValidTo:result.certificateValidTo, serialNumber:result.serialNumber, isSelfSigned:result.isSelfSigned };
   const any=Object.values(f).some(v=>v!==undefined&&v!==null&&v!=='Unknown');
-  return any ? [f] : [];
+  return any?[f]:[];
 }
 
 function chip(text,color){ return `<span style="display:inline-block;padding:2px 8px;border-radius:12px;background:${color}15;color:${color};font-size:0.75rem;font-weight:600;margin-right:6px;">${text}</span>`; }
 function yesNo(v){ if(v===true) return '✅ Yes'; if(v===false) return '❌ No'; return '⚠️ Unknown'; }
 
-function renderSignatureCards(signatures){ if(!Array.isArray(signatures)||signatures.length===0) return ''; return signatures.map((sig,i)=>{ const ok = sig.signatureValid===true && sig.certificateValid!==false && sig.chainValid!==false && sig.revoked!==true; const bar = ok ? '#2c5f2d' : (sig.signatureValid===false ? '#c62828' : '#f57c00'); let chips=''; chips+=chip(sig.signatureValid===true?'Signature: Valid':(sig.signatureValid===false?'Signature: Invalid':'Signature: Unknown'), sig.signatureValid===true?'#2c5f2d':(sig.signatureValid===false?'#c62828':'#f57c00')); if(sig.structureValid!==undefined) chips+=chip(sig.structureValid?'Structure: OK':'Structure: Bad', sig.structureValid?'#2c5f2d':'#c62828'); let certColor='#2c5f2d', certText='Certificate: Valid'; const exp = (sig.certificateValidTo && new Date(sig.certificateValidTo) < new Date()); if(sig.certificateValid===false && exp){ certText='Certificate: Invalid & Expired'; certColor='#c62828'; } else if(sig.certificateValid===true && exp){ certText='Certificate: Valid but Expired'; certColor='#f57c00'; } else if(sig.certificateValid===false){ certText='Certificate: Invalid'; certColor='#c62828'; } else if(exp){ certText='Certificate: Expired'; certColor='#f57c00'; } chips+=chip(certText,certColor); if(sig.chainValidationPerformed!==undefined) chips+=chip(sig.chainValid?'Chain: OK':'Chain: Issues', sig.chainValid?'#2c5f2d':'#f57c00'); if(sig.revocationChecked!==undefined){ if(sig.revocationChecked && sig.revoked===true) chips+=chip('Revocation: Revoked','#c62828'); else if(sig.revocationChecked && sig.revoked===false) chips+=chip('Revocation: Not Revoked','#2c5f2d'); else chips+=chip('Revocation: Not Checked','#f57c00'); }
-  const row=(l,v)=>{ if(!v && v!==0) return ''; return `<div style="display:grid;grid-template-columns:130px 1fr;gap:0.5rem;padding:0.25rem 0;border-bottom:1px solid var(--border);line-height:1.4;"><div style="font-weight:500;color:var(--text-secondary);">${esc(l)}:</div><div style="color:var(--text);word-break:break-word;">${esc(String(v))}</div></div>`; };
+function renderSignatureCards(signatures, integrity){ if(!Array.isArray(signatures)||signatures.length===0) return ''; return signatures.map((sig,i)=>{ const forcedInvalid = integrity===false; const ok = !forcedInvalid && sig.signatureValid===true && sig.certificateValid!==false && sig.chainValid!==false && sig.revoked!==true; const bar = forcedInvalid? '#c62828' : (ok? '#2c5f2d' : (sig.signatureValid===false? '#c62828' : '#f57c00'));
+  let chips=''; if(forcedInvalid){ chips+=chip('Signature: Invalid (Document Modified)', '#c62828'); chips+=chip('Integrity: Failed', '#c62828'); } else { chips+=chip(sig.signatureValid===true?'Signature: Valid':(sig.signatureValid===false?'Signature: Invalid':'Signature: Unknown'), sig.signatureValid===true?'#2c5f2d':(sig.signatureValid===false?'#c62828':'#f57c00')); if(sig.structureValid!==undefined) chips+=chip(sig.structureValid?'Structure: OK':'Structure: Bad', sig.structureValid?'#2c5f2d':'#c62828'); let certColor='#2c5f2d',certText='Certificate: Valid'; const exp=(sig.certificateValidTo && new Date(sig.certificateValidTo)<new Date()); if(sig.certificateValid===false && exp){ certText='Certificate: Invalid & Expired'; certColor='#c62828'; } else if(sig.certificateValid===true && exp){ certText='Certificate: Valid but Expired'; certColor='#f57c00'; } else if(sig.certificateValid===false){ certText='Certificate: Invalid'; certColor='#c62828'; } else if(exp){ certText='Certificate: Expired'; certColor='#f57c00'; } chips+=chip(certText,certColor); if(sig.chainValidationPerformed!==undefined) chips+=chip(sig.chainValid?'Chain: OK':'Chain: Issues', sig.chainValid?'#2c5f2d':'#f57c00'); if(sig.revocationChecked!==undefined){ if(sig.revocationChecked && sig.revoked===true) chips+=chip('Revocation: Revoked','#c62828'); else if(sig.revocationChecked && sig.revoked===false) chips+=chip('Revocation: Not Revoked','#2c5f2d'); else chips+=chip('Revocation: Not Checked','#f57c00'); } }
+  const row=(l,v)=>{ if(!v && v!==0) return ''; return `<div style=\"display:grid;grid-template-columns:130px 1fr;gap:0.5rem;padding:0.25rem 0;border-bottom:1px solid var(--border);line-height:1.4;\"><div style=\"font-weight:500;color:var(--text-secondary);\">${esc(l)}:</div><div style=\"color:var(--text);word-break:break-word;\">${esc(String(v))}</div></div>`; };
   return `<div style="margin-bottom:1rem;padding:0.9rem;background:var(--bg-secondary);border-radius:10px;border-left:4px solid ${bar};"><div style="font-weight:700;color:${bar};margin-bottom:0.5rem;">${esc('Signature #'+(i+1))}</div><div style="margin-bottom:0.5rem;">${chips}</div>${row('Signed By',sig.signedBy)}${row('Organization',sig.organization)}${row('Email',sig.email)}${row('Signing Time',sig.signingTime)}${row('Algorithm',sig.signatureAlgorithm)}${row('Issuer',sig.certificateIssuer)}${row('Valid From',sig.certificateValidFrom)}${row('Valid To',sig.certificateValidTo)}${row('Serial',sig.serialNumber)}${sig.isSelfSigned!==undefined?row('Self-Signed',yesNo(sig.isSelfSigned)):''}</div>`; }).join(''); }
 
 function extractMultipleSignatureInfo(result){ let count=1; if(Array.isArray(result.signatures)) count=Math.max(count,result.signatures.length); if(Array.isArray(result.signatureDetails)) count=Math.max(count,result.signatureDetails.length); if(typeof result.signatureCount==='number') count=Math.max(count,result.signatureCount); if(result.warnings){ for(const w of result.warnings){ const m=w.match(/Multiple signatures detected\s*\((\d+)\)/i); if(m){ count=Math.max(count,parseInt(m[1])); break; } } } return {count}; }
 
-function determineSignatureStatusEnhanced(result){ const integrity=determineFileIntegrity(result); if(integrity===false){ return { icon:'❌', class:'invalid', title:'Document Modified After Signing', description:'Changes were detected after the last signature; verification fails' }; }
+function determineSignatureStatusWithIntegrityOverride(result){ const integrity=determineFileIntegrityEnhanced(result); if(integrity===false){ return { icon:'❌', class:'invalid', title:'Document Modified - Signatures Invalid', description:'Document was altered after signing, invalidating all signatures' }; }
   const multi=extractMultipleSignatureInfo(result); const multiFlag=multi.count>1; const hasWarnings = result.warnings && result.warnings.filter(w=>!w.toLowerCase().includes('multiple signatures detected')).length>0; const isStructureOnly = !result.cryptographicVerification; const chainOK=result.chainValid; const revOK = !result.revoked; const certOK=result.certificateValid; const sigOK=result.signatureValid; const certExp = result.certificateExpired || (result.certificateValidTo && new Date(result.certificateValidTo) < new Date());
   if(result.valid && sigOK && certOK && chainOK && revOK && !certExp){ const base=multiFlag?'Multiple Signatures Verified Successfully':'Signature Verified Successfully'; return { icon:hasWarnings?'⚠️':'✅', class:hasWarnings?'warning':'valid', title:hasWarnings?`${base} (with warnings)`:base, description: multiFlag?`All ${multi.count} signatures are valid and current`:'All signature components are valid and current' }; }
   if(sigOK && certOK && chainOK && !revOK){ return { icon:'🚫', class:'invalid', title:'Certificate Revoked', description: multiFlag?'Signatures are valid but one or more certificates have been revoked':'Signature is valid but certificate has been revoked' }; }
@@ -93,9 +80,9 @@ function determineSignatureStatusEnhanced(result){ const integrity=determineFile
   return { icon:'❌', class:'invalid', title:'No Valid Signature', description:'No recognizable digital signature found' };
 }
 
-function displayResults(result){ if(!result){ showError('Invalid result'); return; } const integrity=determineFileIntegrity(result); const status=determineSignatureStatusEnhanced(result); resultIcon.textContent=status.icon; resultIcon.className='result-icon '+status.class; resultTitle.textContent=status.title; let html=''; html+='<div class="integrity-section" style="margin-bottom:1.5rem;padding:1rem;background:var(--bg-secondary);border-radius:8px;border-left:4px solid '+getIntegrityColor(integrity)+';">'; html+='<div style="font-size:0.875rem;font-weight:600;color:var(--text);margin-bottom:0.5rem;">🛡️ File Integrity Status</div>'; if(integrity===true){ html+='<div style="color:#2c5f2d;font-weight:500;">✅ Document Intact</div>'; html+='<div style="font-size:0.8rem;color:var(--text-secondary);margin-top:0.25rem;">The file has not been modified after signing</div>'; } else if(integrity===false){ html+='<div style="color:#c62828;font-weight:500;">❌ Document Modified</div>'; if(result.integrityReason){ html+=`<div style="font-size:0.8rem;color:var(--text-secondary);margin-top:0.25rem;">${esc(result.integrityReason)}</div>`; } if(result.pdf && typeof result.pdf.incrementalUpdates==='number'){ html+=`<div style="font-size:0.8rem;color:var(--text-secondary);margin-top:0.25rem;">PDF incremental updates: ${result.pdf.incrementalUpdates}</div>`; } } else { html+='<div style="color:#f57c00;font-weight:500;">⚠️ Integrity Unknown</div>'; if(result.pdf && typeof result.pdf.incrementalUpdates==='number'){ html+=`<div style="font-size:0.8rem;color:var(--text-secondary);margin-top:0.25rem;">PDF incremental updates: ${result.pdf.incrementalUpdates}</div>`; } } html+='</div>';
+function displayResults(result){ if(!result){ showError('Invalid result'); return; } const integrity=determineFileIntegrityEnhanced(result); const status=determineSignatureStatusWithIntegrityOverride(result); resultIcon.textContent=status.icon; resultIcon.className='result-icon '+status.class; resultTitle.textContent=status.title; let html=''; html+='<div class="integrity-section" style="margin-bottom:1.5rem;padding:1rem;background:var(--bg-secondary);border-radius:8px;border-left:4px solid '+getIntegrityColor(integrity)+';">'; html+='<div style="font-size:0.875rem;font-weight:600;color:var(--text);margin-bottom:0.5rem;">🛡️ File Integrity Status</div>'; if(integrity===true){ html+='<div style="color:#2c5f2d;font-weight:500;">✅ Document Intact</div>'; html+='<div style="font-size:0.8rem;color:var(--text-secondary);margin-top:0.25rem;">The file has not been modified after signing</div>'; } else if(integrity===false){ html+='<div style="color:#c62828;font-weight:500;">❌ Document Modified</div>'; if(result.integrityReason){ html+=`<div style="font-size:0.8rem;color:var(--text-secondary);margin-top:0.25rem;">${esc(result.integrityReason)}</div>`; } if(result.pdf && typeof result.pdf.incrementalUpdates==='number'){ html+=`<div style="font-size:0.8rem;color:var(--text-secondary);margin-top:0.25rem;">PDF incremental updates: ${result.pdf.incrementalUpdates}</div>`; } } else { html+='<div style="color:#f57c00;font-weight:500;">⚠️ Integrity Unknown</div>'; if(result.pdf && typeof result.pdf.incrementalUpdates==='number'){ html+=`<div style="font-size:0.8rem;color:var(--text-secondary);margin-top:0.25rem;">PDF incremental updates: ${result.pdf.incrementalUpdates}</div>`; } } html+='</div>';
   const multi=extractMultipleSignatureInfo(result); if(multi.count>1){ html+='<div class="signature-info-section" style="margin-bottom:1.5rem;padding:1rem;background:var(--bg-secondary);border-radius:8px;border-left:4px solid #2c5f2d;">'; html+='<div style="font-size:0.875rem;font-weight:600;color:var(--text);margin-bottom:0.5rem;">📝 Signature Information</div>'; html+='<div style="color:#2c5f2d;font-weight:500;">✅ Multiple Signatures Detected</div>'; html+=`<div style="font-size:0.8rem;color:var(--text-secondary);margin-top:0.25rem;">Document contains ${multi.count} valid digital signatures</div>`; html+='</div>'; }
-  const sigs=getSignaturesArray(result); if(sigs.length>0){ html+=renderSignatureCards(sigs); }
+  const sigs=getSignaturesArray(result); if(sigs.length>0){ html+=renderSignatureCards(sigs, integrity); }
   if(result.error){ html+=row('Status',esc(result.error),!result.cryptographicVerification?'#2196f3':'#f57c00'); }
   html+=row('File',esc(result.fileName)); html+=row('Format',esc(result.format)); if(result.processingTime){ html+=row('Processing',`${result.processingTime}ms`); }
   if(result.cryptographicVerification!==undefined){ const st=result.cryptographicVerification?'✅ Full Verification':'📋 Structure Analysis'; const col=result.cryptographicVerification?'#2c5f2d':'#2196f3'; html+=row('Verification',st,col); }
@@ -124,4 +111,4 @@ document.addEventListener('dragenter',e=>{ e.preventDefault(); document.body.cla
 document.addEventListener('dragleave',e=>{ if(!e.relatedTarget){ document.body.classList.remove('drag-active'); } });
 document.addEventListener('drop',e=>{ e.preventDefault(); document.body.classList.remove('drag-active'); });
 
-console.log('Signsley - v3.4 Deterministic Integrity & Multi-Sign Rendering');
+console.log('Signsley - v3.5 Integrity Overrides & Multi-Sign Rendering');
