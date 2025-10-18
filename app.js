@@ -71,8 +71,12 @@ async function sendVerificationRequest(endpoint, base64Data, fileName) {
   try{ const resp = await fetch(endpoint, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ fileData: base64Data, fileName }), signal: controller.signal }); clearTimeout(timeoutId); if (!resp.ok){ const errData = await resp.json().catch(()=>({})); throw new Error(errData.error || `Server error: ${resp.status}`); } return await resp.json(); } catch(e){ clearTimeout(timeoutId); if (e.name==='AbortError') throw new Error('Request timeout - signature processing may require more time'); throw e; }
 }
 
-// Integrity assessment
+// FIXED: Integrity assessment - return null (unknown) for no-signature case
 function determineFileIntegrityEnhanced(result) {
+  // CRITICAL: If no signature detected, integrity is unknown, not false
+  if (result && result.error === 'No digital signature detected') return null;
+  if (result && !result.structureValid && result.error === 'No digital signature detected') return null;
+  
   if (typeof result.documentIntact === 'boolean') return result.documentIntact;
   if (result.fileName && result.fileName.toLowerCase().includes('tamper')) return false;
   if (result.format && result.format.includes('PAdES') && result.pdf) {
@@ -85,7 +89,6 @@ function determineFileIntegrityEnhanced(result) {
   const sigValid = result.signatureValid === true;
   const structValid = result.structureValid === true;
   if (sigValid === false || structValid === false || result.revoked === true) return false;
-  if (result.error === 'No digital signature detected') return null;
   if (cryptoValid && sigValid && structValid) return true;
   return null;
 }
@@ -212,9 +215,9 @@ function renderSignatureCards(signatures, integrity) {
       chainHtml += `</div></div>`;
     }
     function certRow(label, value) { return `<div style="display: grid; grid-template-columns: 100px 1fr; gap: 0.5rem; padding: 0.25rem 0; border-bottom: 1px solid var(--border); line-height: 1.4;"><div style="font-weight: 500; color: var(--text-secondary);">${esc(label)}:</div><div style="color: var(--text); word-break: break-word; font-family: monospace; font-size: 0.9em;">${esc(value)}</div></div>`; }
-    return `<div class=\"signature-card\" style=\"margin-bottom:1rem;padding:0.9rem;background:var(--bg-secondary);border-radius:10px;border-left:4px solid ${bar};\">`+
-           `<div style=\"font-weight:700;color:${bar};margin-bottom:0.5rem;\">${esc('Signature #'+(i+1))}</div>`+
-           `<div style=\"margin-bottom:0.5rem;\">${chips}</div>`+
+    return `<div class="signature-card" style="margin-bottom:1rem;padding:0.9rem;background:var(--bg-secondary);border-radius:10px;border-left:4px solid ${bar};">`+
+           `<div style="font-weight:700;color:${bar};margin-bottom:0.5rem;">${esc('Signature #'+(i+1))}</div>`+
+           `<div style="margin-bottom:0.5rem;">${chips}</div>`+
            `${row('Signed By',sig.signedBy)}${row('Organization',sig.organization)}${row('Email',sig.email)}${row('Signing Time',sig.signingTime)}${row('Algorithm',sig.signatureAlgorithm)}${row('Issuer',sig.certificateIssuer)}${row('Valid From',sig.certificateValidFrom)}${row('Valid To',sig.certificateValidTo)}${row('Serial',sig.serialNumber)}${sig.isSelfSigned!==undefined?row('Self-Signed', yesNo(sig.isSelfSigned)):''}`+
            `${chainHtml}`+
            `</div>`; }).join(''); }
@@ -225,9 +228,10 @@ function chip(text,color){ return `<span style="display:inline-block;padding:2px
 function showLoading(text='Processing...'){ const el = loading && loading.querySelector('.loading-text'); if (el){ el.textContent=text; let dots=0; const it=setInterval(()=>{ if(!loading.classList.contains('show')){ clearInterval(it); return; } dots=(dots+1)%4; el.textContent = text + '.'.repeat(dots); }, 500); } loading && loading.classList.add('show'); }
 function hideLoading(){ loading && loading.classList.remove('show'); }
 function hideResults(){ results && results.classList.remove('show'); }
-function showError(message){ let html = `<div class=\"error-main\">❌ ${esc(message)}</div>`; if (message.includes('timeout')){ html += `<div class=\"error-sub\">⏱️ The signature verification process timed out.</div>`; html += `<div class=\"error-help\">💡 Try again, or use Adobe Acrobat Reader for advanced signatures.</div>`; } else if (message.includes('File too large')){ html += `<div class=\"error-sub\">📁 The file exceeds the maximum size limit of 6MB.</div>`; html += `<div class=\"error-help\">💡 Try compressing the PDF or use a smaller file.</div>`; } else if (message.includes('Unsupported file type')){ html += `<div class=\"error-sub\">📄 Only PDF, XML, P7M, P7S, and SIG files are supported.</div>`; html += `<div class=\"error-help\">💡 Ensure your file has the correct extension and format.</div>`; } else { html += `<div class=\"error-sub\">🔍 For advanced signatures, try Adobe Acrobat Reader for full verification.</div>`; html += `<div class=\"error-help\">💡 If the problem persists, the signature may use proprietary encoding.</div>`; } if (errorMessage){ errorMessage.innerHTML = html; errorMessage.className = 'error-message error show'; } }
+function showError(message){ let html = `<div class="error-main">❌ ${esc(message)}</div>`; if (message.includes('timeout')){ html += `<div class="error-sub">⏱️ The signature verification process timed out.</div>`; html += `<div class="error-help">💡 Try again, or use Adobe Acrobat Reader for advanced signatures.</div>`; } else if (message.includes('File too large')){ html += `<div class="error-sub">📁 The file exceeds the maximum size limit of 6MB.</div>`; html += `<div class="error-help">💡 Try compressing the PDF or use a smaller file.</div>`; } else if (message.includes('Unsupported file type')){ html += `<div class="error-sub">📄 Only PDF, XML, P7M, P7S, and SIG files are supported.</div>`; html += `<div class="error-help">💡 Ensure your file has the correct extension and format.</div>`; } else { html += `<div class="error-sub">🔍 For advanced signatures, try Adobe Acrobat Reader for full verification.</div>`; html += `<div class="error-help">💡 If the problem persists, the signature may use proprietary encoding.</div>`; } if (errorMessage){ errorMessage.innerHTML = html; errorMessage.className = 'error-message error show'; } }
 function hideError(){ errorMessage && errorMessage.classList.remove('show'); }
-function row(label, value, color=null){ const style = color ? ` style=\"color: ${color}; font-weight: 500;\"` : ''; return `<div class=\"detail-row\"><div class=\"detail-label\">${esc(label)}:</div><div class=\"detail-value\"${style}>${value}</div></div>`; }
+function row(label, value, color=null){ const style = color ? ` style="color: ${color}; font-weight: 500;"` : ''; return `<div class="detail-row"><div class="detail-label">${esc(label)}:</div><div class="detail-value"${style}>${value}</div></div>`; }
 function esc(text){ if (!text) return ''; const div=document.createElement('div'); div.textContent = text.toString(); return div.innerHTML; }
 
 console.log('Signsley - v3.9 Single-click upload + integrity unknown when no signature + collapsible chains');
+
