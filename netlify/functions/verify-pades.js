@@ -60,7 +60,7 @@ function bytesFromHex(hex) {
   return Buffer.from(hex, 'hex');
 }
 
-// ULTRA-ROBUST: Maximum signature extraction strategies
+// FIXED: Corrected regex syntax errors
 function extractAllHexContents(pdfString) {
   const allHex = [];
 
@@ -126,8 +126,8 @@ function extractAllHexContents(pdfString) {
   // Strategy 5: PKCS#7 specific patterns
   const pkcs7Patterns = [
     /<(30[0-9a-fA-F]{2}[0-9a-fA-F\s\r\n]{200,}?)>/g,
-    /<(308[0-9a-fA-F][0-9a-fA-F\s\r\n]{200,}?)>/g,  // Large structures
-    /<(3082[0-9a-fA-F]{4}[0-9a-fA-F\s\r\n]{200,}?)>/g,  // Very large structures
+    /<(308[0-9a-fA-F][0-9a-fA-F\s\r\n]{200,}?)>/g,
+    /<(3082[0-9a-fA-F]{4}[0-9a-fA-F\s\r\n]{200,}?)>/g,
   ];
 
   pkcs7Patterns.forEach((pattern, idx) => {
@@ -155,11 +155,12 @@ function extractAllHexContents(pdfString) {
     }
   });
 
-  // Strategy 7: Multi-line and wrapped hex patterns
+  // Strategy 7: Multi-line and wrapped hex patterns (FIXED REGEX)
   const multilinePatterns = [
     /<\n?([0-9a-fA-F\s\r\n]{500,}?)\n?>/gi,
     /<\r?\n?([0-9a-fA-F\s\r\n]{500,}?)\r?\n?>/gi,
-    /<([0-9a-fA-F]([\s\r\n]+[0-9a-fA-F])*{500,})>/g,
+    // FIXED: Corrected the problematic regex pattern
+    /<([0-9a-fA-F]+(?:[\s\r\n]+[0-9a-fA-F]+)*?)>/g,
   ];
 
   multilinePatterns.forEach((pattern, idx) => {
@@ -171,7 +172,7 @@ function extractAllHexContents(pdfString) {
     }
   });
 
-  // Strategy 8: Exhaustive hex search (new)
+  // Strategy 8: Exhaustive hex search
   const exhaustivePattern = /[^0-9a-fA-F]([0-9a-fA-F]{1000,})[^0-9a-fA-F]/gi;
   while ((m = exhaustivePattern.exec(pdfString)) !== null) {
     const hex = m[1];
@@ -180,7 +181,7 @@ function extractAllHexContents(pdfString) {
     }
   }
 
-  // Strategy 9: Binary data patterns (new)
+  // Strategy 9: Binary data patterns
   const binaryPatterns = [
     /stream\s*\n([\s\S]*?)\nendstream/gi,
     /xref[\s\S]*?trailer[\s\S]*?<([0-9a-fA-F\s\r\n]{200,}?)>/gi,
@@ -266,7 +267,7 @@ function findAllSignatures(buffer) {
     let closestHex = null, minDistance = Infinity;
     for (const hc of hexContents) {
       const d = Math.abs(hc.position - br.position);
-      if (d < minDistance && d < 200000) { // Very large search distance
+      if (d < minDistance && d < 200000) {
         minDistance = d; 
         closestHex = hc; 
       }
@@ -299,18 +300,17 @@ function findAllSignatures(buffer) {
     }
   }
 
-  // Strategy 3: Certificate proximity search (enhanced)
+  // Strategy 3: Certificate proximity search
   const certPatterns = [
     /-----BEGIN CERTIFICATE-----([\s\S]*?)-----END CERTIFICATE-----/gi,
-    /MII[A-Za-z0-9+\/]{100,}/g,  // Base64 certificate pattern
-    /308[0-9a-fA-F]{2}[0-9a-fA-F]{200,}/gi, // DER certificate pattern
+    /MII[A-Za-z0-9+\/]{100,}/g,
+    /308[0-9a-fA-F]{2}[0-9a-fA-F]{200,}/gi,
   ];
 
   certPatterns.forEach(pattern => {
     let certMatch;
     while ((certMatch = pattern.exec(pdfString)) !== null) {
       console.log('Found certificate pattern');
-      // Look for nearby signature data with larger search radius
       const searchStart = Math.max(0, certMatch.index - 20000);
       const searchEnd = Math.min(pdfString.length, certMatch.index + 20000);
       const nearbyContent = pdfString.substring(searchStart, searchEnd);
@@ -333,7 +333,7 @@ function findAllSignatures(buffer) {
     }
   });
 
-  // Strategy 4: Signature object search (new)
+  // Strategy 4: Signature object search
   const sigObjPattern = /\d+\s+\d+\s+obj[\s\S]*?\/Type\s*\/Sig[\s\S]*?endobj/gi;
   let objMatch;
   while ((objMatch = sigObjPattern.exec(pdfString)) !== null) {
@@ -356,10 +356,7 @@ function findAllSignatures(buffer) {
     }
   }
 
-  // Remove very short signatures that are likely noise
   const filtered = signatures.filter(sig => sig.signatureHex.length >= 500);
-
-  // Sort by confidence and hex length
   filtered.sort((a, b) => {
     const confDiff = (b.confidence || 0) - (a.confidence || 0);
     if (confDiff !== 0) return confDiff;
@@ -370,35 +367,32 @@ function findAllSignatures(buffer) {
   return filtered;
 }
 
-// ENHANCED: More comprehensive PKCS#7 signature detection
 function isPotentialPKCS7Signature(hex) {
   if (hex.length < 200) return false;
 
   const lowerHex = hex.toLowerCase();
 
-  // Primary PKCS#7 indicators (must have at least one)
   const primaryIndicators = [
-    '3082',          // SEQUENCE, definite length
-    '3080',          // SEQUENCE, indefinite length  
-    '06092a864886f70d010702',  // PKCS#7 signedData OID
-    '06092a864886f70d010701',  // PKCS#7 data OID
+    '3082',          
+    '3080',         
+    '06092a864886f70d010702',
+    '06092a864886f70d010701',
   ];
 
   const hasPrimary = primaryIndicators.some(ind => lowerHex.includes(ind));
   if (!hasPrimary) return false;
 
-  // Secondary indicators (bonus points)
   const secondaryIndicators = [
-    '30819f300d',    // Certificate start pattern
-    '308201',        // Certificate pattern
-    '30820',         // Large structure indicator
-    '06092a864886f70d01',      // PKCS OID prefix
-    'a08082',        // Context-specific constructed tag
-    '02',            // INTEGER tag
-    '04',            // OCTET STRING tag
-    '31',            // SET tag
-    '30',            // SEQUENCE tag (general)
-    '06',            // OID tag
+    '30819f300d',    
+    '308201',        
+    '30820',         
+    '06092a864886f70d01',      
+    'a08082',        
+    '02',            
+    '04',            
+    '31',            
+    '30',            
+    '06',            
   ];
 
   let score = 0;
@@ -408,12 +402,11 @@ function isPotentialPKCS7Signature(hex) {
     }
   }
 
-  // Additional checks for certificate patterns
   const certPatterns = [
-    /308[0-9a-f]{2}[0-9a-f]{2}/,  // Certificate SEQUENCE
-    /020[0-9a-f]/,                // Serial number
-    /30[0-9a-f]{2}06/,            // Algorithm identifier
-    /0603551d/,                   // Certificate extension OID prefix
+    /308[0-9a-f]{2}[0-9a-f]{2}/,  
+    /020[0-9a-f]/,                
+    /30[0-9a-f]{2}06/,            
+    /0603551d/,                   
   ];
 
   for (const pattern of certPatterns) {
@@ -426,19 +419,16 @@ function isPotentialPKCS7Signature(hex) {
   return score >= 4;
 }
 
-// ULTRA-ROBUST: Maximum parsing strategies for different signature formats
 function tryParseSignature(signatureHex) {
   const strategies = [
-    // Strategy 1: Direct parsing
     () => {
       console.log('Strategy 1: Direct parsing');
       return parseDirectly(signatureHex);
     },
 
-    // Strategy 2: Progressive truncation (enhanced)
     () => {
       console.log('Strategy 2: Progressive truncation');
-      for (let i = signatureHex.length; i >= 500; i -= 250) { // Smaller steps
+      for (let i = signatureHex.length; i >= 500; i -= 250) {
         try { 
           const r = parseDirectly(signatureHex.substring(0, i)); 
           if (r && r.certificates && r.certificates.length > 0) {
@@ -446,13 +436,11 @@ function tryParseSignature(signatureHex) {
             return r;
           }
         } catch(e) {
-          // Continue trying
         } 
       } 
       return null; 
     },
 
-    // Strategy 3: ASN.1 structure start detection
     () => {
       console.log('Strategy 3: ASN.1 structure detection');
       const indicators = ['3082', '3080', '3081', '3084', '3030'];
@@ -476,7 +464,6 @@ function tryParseSignature(signatureHex) {
       return null; 
     },
 
-    // Strategy 4: Padding and cleanup
     () => { 
       console.log('Strategy 4: Padding removal');
       const variations = [
@@ -485,7 +472,7 @@ function tryParseSignature(signatureHex) {
         signatureHex.replace(/^00+/, '').replace(/00+$/, ''),
         signatureHex.replace(/^0+/, ''),
         signatureHex.replace(/0+$/, ''),
-        signatureHex.replace(/[^0-9a-fA-F]/g, ''),  // Remove all non-hex
+        signatureHex.replace(/[^0-9a-fA-F]/g, ''),
       ];
 
       for (const variation of variations) {
@@ -500,7 +487,6 @@ function tryParseSignature(signatureHex) {
       return null; 
     },
 
-    // Strategy 5: Chunk size testing
     () => {
       console.log('Strategy 5: Chunk size testing');
       const chunkSizes = [2000, 4000, 6000, 8000, 12000, 16000, 24000, 32000];
@@ -519,7 +505,6 @@ function tryParseSignature(signatureHex) {
       return null;
     },
 
-    // Strategy 6: Position offset testing
     () => {
       console.log('Strategy 6: Position offset testing');
       const startPositions = [0, 50, 100, 150, 200, 300, 400, 500, 750, 1000];
@@ -538,7 +523,6 @@ function tryParseSignature(signatureHex) {
       return null;
     },
 
-    // Strategy 7: Binary search for structure
     () => {
       console.log('Strategy 7: Binary search');
       let left = 1000;
@@ -570,7 +554,6 @@ function tryParseSignature(signatureHex) {
       return null;
     },
 
-    // Strategy 8: Reverse parsing (new)
     () => {
       console.log('Strategy 8: Reverse parsing');
       for (let i = signatureHex.length - 1000; i >= 1000; i -= 500) {
@@ -586,7 +569,6 @@ function tryParseSignature(signatureHex) {
       return null;
     },
 
-    // Strategy 9: Multiple segment parsing (new)
     () => {
       console.log('Strategy 9: Multiple segment parsing');
       const segments = Math.ceil(signatureHex.length / 8000);
@@ -605,13 +587,10 @@ function tryParseSignature(signatureHex) {
       return null;
     },
 
-    // Strategy 10: Hex validation and repair (new)
     () => {
       console.log('Strategy 10: Hex validation and repair');
-      // Ensure even length
       let cleanHex = signatureHex.length % 2 === 0 ? signatureHex : signatureHex.substring(0, signatureHex.length - 1);
 
-      // Try with different repairs
       const repairs = [
         cleanHex,
         '00' + cleanHex,
@@ -643,7 +622,6 @@ function tryParseSignature(signatureHex) {
       if (r && r.certificates && r.certificates.length > 0) {
         console.log(`Strategy ${i + 1} succeeded! Found ${r.certificates.length} certificates`);
 
-        // Log certificate info for debugging
         r.certificates.forEach((cert, idx) => {
           try {
             const cn = cert.subject.attributes.find(a => a.shortName === 'CN')?.value || 'Unknown';
@@ -671,7 +649,6 @@ function parseDirectly(signatureHex) {
 
 function selectSignerCert(p7) {
   try {
-    // Look for specific signer patterns
     const patterns = ['YOUSIGN', 'Sequi', 'Samuele', 'Trevor', 'Fitzpatrick', 'Hughes', 'Greensley'];
     for (const pattern of patterns) {
       const patternCert = (p7.certificates || []).find(c => {
@@ -688,7 +665,6 @@ function selectSignerCert(p7) {
       }
     }
 
-    // Fallback to first non-self-signed certificate
     const nonSelfSigned = (p7.certificates || []).find(c => !isSelfSignedCertificate(c));
     if (nonSelfSigned) {
       console.log('Using first non-self-signed certificate');
@@ -895,7 +871,6 @@ function buildAndValidateCertificateChain(certificates) {
       };
     });
 
-    // Enhanced end entity detection for multiple signers
     let endEntityCert = certAnalysis.find(a => 
       !a.selfSigned && (
         a.subjectCN.includes('YOUSIGN') ||
@@ -1339,7 +1314,6 @@ async function extractSignatureInfo(signatureHex, pdfBuffer, byteRange) {
     let signatureValid = verificationResult.valid;
     let isStructureOnly = verificationResult.structureOnly || false;
 
-    // Enhanced validation for different signers
     if (!signatureValid && certValid && chainValidation.valid && 
         (certInfo.commonName.includes('YOUSIGN') || 
          certInfo.commonName.includes('Sequi') || 
@@ -1430,7 +1404,6 @@ exports.handler = async (event) => {
     console.log(`Found ${signatures.length} signature(s) in PDF, attempting ultra-robust parsing...`);
     let sigInfo = null, workingSig = null, parseAttempts = [];
 
-    // Try parsing signatures in order of confidence and size
     for (const sig of signatures) {
       console.log(`Trying to parse signature using method: ${sig.method} (confidence: ${sig.confidence || 0}, length: ${sig.signatureHex.length})`);
       const info = await extractSignatureInfo(sig.signatureHex, buffer, sig.byteRange);
