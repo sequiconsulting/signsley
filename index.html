@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Digital signature verification for PAdES, XAdES, and CAdES signatures">
   <title>Signsley - Digital Signature Verification</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -14,7 +15,7 @@
   <div class="container">
     <header class="header">
       <div class="logo">
-        <svg width="32" height="32" viewBox="0 0 32  32" fill="none">
+        <svg width="32" height="32" viewBox="0 0 32 32" fill="none" aria-label="Signsley Logo">
           <rect width="32" height="32" rx="8" fill="url(#gradient)"/>
           <path d="M22 10L14 18L10 14" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
           <defs>
@@ -32,8 +33,8 @@
     <main class="main">
       <div class="upload-card">
         <div class="upload-area" id="uploadSection">
-          <input type="file" id="fileInput" hidden accept=".pdf,.xml,.p7m,.p7s,.sig">
-          <svg class="upload-icon" width="48" height="48" viewBox="0 0 48 48" fill="none">
+          <input type="file" id="fileInput" hidden accept=".pdf,.xml,.p7m,.p7s,.sig" aria-label="Choose file for verification">
+          <svg class="upload-icon" width="48" height="48" viewBox="0 0 48 48" fill="none" aria-hidden="true">
             <rect x="8" y="8" width="32" height="32" rx="8" fill="#F0FDF4"/>
             <path d="M24 20V28M20 24H28" stroke="#10B981" stroke-width="2" stroke-linecap="round"/>
             <path d="M16 30V32C16 33.1046 16.8954 34 18 34H30C31.1046 34 32 33.1046 32 32V30" stroke="#10B981" stroke-width="2" stroke-linecap="round"/>
@@ -47,14 +48,14 @@
           </div>
         </div>
 
-        <div class="loading" id="loading">
-          <div class="spinner"></div>
+        <div class="loading" id="loading" role="status" aria-live="polite">
+          <div class="spinner" aria-hidden="true"></div>
           <span class="loading-text">Verifying signature...</span>
         </div>
 
-        <div class="results" id="results">
+        <div class="results" id="results" role="region" aria-live="polite">
           <div class="result-header">
-            <div class="result-icon" id="resultIcon"></div>
+            <div class="result-icon" id="resultIcon" aria-hidden="true"></div>
             <div>
               <h3 id="resultTitle"></h3>
             </div>
@@ -62,7 +63,7 @@
           <div id="resultDetails"></div>
         </div>
 
-        <div class="error-message" id="errorMessage"></div>
+        <div class="error-message" id="errorMessage" role="alert"></div>
       </div>
     </main>
 
@@ -72,48 +73,6 @@
     </footer>
   </div>
 
-  <script>
-  // Unified, robust upload wiring with immediate routing
-  window.addEventListener('DOMContentLoaded', function(){
-    const area = document.getElementById('uploadSection');
-    const input = document.getElementById('fileInput');
-    const button = document.getElementById('browseBtn');
-
-    if(!area || !input || !button) return;
-
-    function routeToApp(file){
-      try{ if(window.handleFile){ window.handleFile(file); return; } }catch(_){ }
-      const dt = new DataTransfer(); dt.items.add(file); input.files = dt.files;
-      input.dispatchEvent(new Event('change', {bubbles:true}));
-    }
-
-    // Click on area opens picker unless button itself
-    area.addEventListener('click', (e)=>{
-      const isButton = e.target && (e.target.id === 'browseBtn' || (e.target.closest && e.target.closest('#browseBtn')));
-      if(isButton) return; input.click();
-    });
-
-    // Button -> clear value and click via microtask, then change/input handle routing
-    button.addEventListener('click', (e)=>{ e.preventDefault(); e.stopPropagation(); input.value=''; Promise.resolve().then(()=> input.click()); });
-
-    const onPick = (e)=>{ const f = e.target && e.target.files && e.target.files[0]; if (f) routeToApp(f); };
-    input.addEventListener('change', onPick);
-    input.addEventListener('input', onPick);
-
-    ['dragenter','dragover'].forEach(evt=> area.addEventListener(evt, (e)=>{ e.preventDefault(); e.stopPropagation(); area.classList.add('dragover'); }));
-    ['dragleave','drop'].forEach(evt=> area.addEventListener(evt, (e)=>{ e.preventDefault(); e.stopPropagation(); if(evt==='drop'){ const dt=e.dataTransfer; if(dt && dt.files && dt.files.length){ routeToApp(dt.files[0]); } } area.classList.remove('dragover'); }));
-  });
-  </script>
-
   <script src="app.js"></script>
-  <script>
-    document.addEventListener('click', function(e){
-      const toggle = e.target.closest && e.target.closest('[data-chain-toggle]');
-      if(!toggle) return;
-      const targetId = toggle.getAttribute('data-chain-toggle');
-      const panel = document.getElementById(targetId);
-      if(panel){ panel.classList.toggle('show'); panel.style.display = panel.classList.contains('show') ? 'block' : 'none'; }
-    });
-  </script>
 </body>
 </html>
