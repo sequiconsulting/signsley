@@ -31,6 +31,11 @@
     </header>
 
     <main class="main">
+      <div class="explainer-section">
+        <h2 class="explainer-title">This tool confirms your PAdES PDF has not been altered since digital signing.</h2>
+        <p class="explainer-subtitle">Certificate status is shown for reference only and does not influence integrity validation.</p>
+      </div>
+
       <div class="upload-card">
         <div class="upload-area" id="uploadSection">
           <input type="file" id="fileInput" hidden accept=".pdf,.xml,.p7m,.p7s,.sig" aria-label="Choose file for verification">
@@ -43,9 +48,6 @@
           <h2>Upload Document</h2>
           <p>Drag & drop your signed file here or click to browse</p>
           <button class="btn-primary" id="browseBtn" type="button">Choose File</button>
-          <div class="supported-formats">
-            <span>PDF</span><span>XML</span><span>P7M</span><span>P7S</span><span>SIG</span>
-          </div>
         </div>
 
         <div class="loading" id="loading" role="status" aria-live="polite">
@@ -55,11 +57,10 @@
 
         <div class="results" id="results" role="region" aria-live="polite">
           <div class="result-header">
-            <div class="result-icon" id="resultIcon" aria-hidden="true"></div>
+            <div id="integrityBadge" class="integrity-badge"></div>
             <div style="flex: 1;">
               <h3 id="resultTitle"></h3>
             </div>
-            <div id="integrityBadge" class="integrity-badge"></div>
           </div>
           <div id="resultDetails"></div>
         </div>

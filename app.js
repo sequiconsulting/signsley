@@ -4,7 +4,6 @@ const fileInput = document.getElementById('fileInput');
 const browseBtn = document.getElementById('browseBtn');
 const loading = document.getElementById('loading');
 const results = document.getElementById('results');
-const resultIcon = document.getElementById('resultIcon');
 const resultTitle = document.getElementById('resultTitle');
 const resultDetails = document.getElementById('resultDetails');
 const errorMessage = document.getElementById('errorMessage');
@@ -270,7 +269,6 @@ function determineSignatureStatusWithIntegrityOverride(result) {
 
   if (integrity === false) {
     return {
-      icon: '❌',
       class: 'invalid',
       title: 'Document Modified - Signatures Invalid',
       description: 'Document altered after signing'
@@ -279,7 +277,6 @@ function determineSignatureStatusWithIntegrityOverride(result) {
 
   if (result?.error === 'No digital signature detected') {
     return {
-      icon: '⚠️',
       class: 'warning',
       title: 'No Embedded Signature',
       description: 'No digital signature found'
@@ -297,7 +294,6 @@ function determineSignatureStatusWithIntegrityOverride(result) {
 
   if (sigOK && certValidAtSigning && chainOK && revOK && certExpiredSince) {
     return {
-      icon: '⏰',
       class: 'expired',
       title: multiFlag ? 'Valid Signatures - Cert Expired' : 'Valid Signature - Cert Expired',
       description: multiFlag
@@ -308,7 +304,6 @@ function determineSignatureStatusWithIntegrityOverride(result) {
 
   if (sigOK && !certValidAtSigning) {
     return {
-      icon: '❌',
       class: 'invalid',
       title: 'Invalid Certificate',
       description: 'Certificate not valid at signing time'
@@ -320,7 +315,6 @@ function determineSignatureStatusWithIntegrityOverride(result) {
 
   if (result.valid && sigOK && certOK && chainOK && revOK && !certExp) {
     return {
-      icon: '✅',
       class: 'valid',
       title: multiFlag ? 'Multiple Signatures Verified' : 'Signature Verified',
       description: multiFlag ? `All ${multi.count} signatures valid` : 'All components valid'
@@ -329,7 +323,6 @@ function determineSignatureStatusWithIntegrityOverride(result) {
 
   if (sigOK && certOK && chainOK && !revOK) {
     return {
-      icon: '🚫',
       class: 'invalid',
       title: 'Certificate Revoked',
       description: 'Certificate has been revoked'
@@ -338,7 +331,6 @@ function determineSignatureStatusWithIntegrityOverride(result) {
 
   if (sigOK && chainOK && certExp && !certExpiredSince) {
     return {
-      icon: '⏰',
       class: 'expired',
       title: multiFlag ? 'Valid Signatures - Cert Expired' : 'Valid Signature - Cert Expired',
       description: 'Certificate expired'
@@ -347,7 +339,6 @@ function determineSignatureStatusWithIntegrityOverride(result) {
 
   if (result.structureValid && !result.cryptographicVerification) {
     return {
-      icon: '📋',
       class: 'info',
       title: 'Signature Structure Valid',
       description: 'Structure verified - crypto validation not performed'
@@ -356,7 +347,6 @@ function determineSignatureStatusWithIntegrityOverride(result) {
 
   if (result.structureValid && !sigOK) {
     return {
-      icon: '❌',
       class: 'invalid',
       title: 'Invalid Signature',
       description: 'Cryptographic validation failed'
@@ -365,7 +355,6 @@ function determineSignatureStatusWithIntegrityOverride(result) {
 
   if (!result.structureValid) {
     return {
-      icon: '❌',
       class: 'invalid',
       title: 'Corrupted Structure',
       description: 'Signature structure damaged'
@@ -373,7 +362,6 @@ function determineSignatureStatusWithIntegrityOverride(result) {
   }
 
   return {
-    icon: '❌',
     class: 'invalid',
     title: 'No Valid Signature',
     description: 'No valid signature found'
@@ -407,15 +395,12 @@ function displayResults(result) {
   const integrityMsg = getIntegrityStatusMessage(integrity, result);
   const main = integrity === false
     ? {
-        icon: '❌',
         class: 'invalid',
         title: 'Document Modified',
         description: 'Document altered after signing'
       }
     : determineSignatureStatusWithIntegrityOverride(result);
 
-  resultIcon.textContent = main.icon;
-  resultIcon.className = 'result-icon ' + main.class;
   resultTitle.textContent = main.title;
 
   // Set integrity badge
@@ -513,10 +498,6 @@ function displayResults(result) {
   }
 
   addIfPresent('Detection', result.detectionMethod);
-	// Document integrity status
-	if (integrityMsg && !(result?.error === 'No digital signature detected')) {
-  	html += row('Document Integrity', `${integrityMsg.status} — ${integrityMsg.detail}`, integrityMsg.color);
-	}
 
   if (result.troubleshooting?.length > 0) {
     const tips = result.troubleshooting.slice(0, 3).map(t => `💡 ${esc(t)}`).join('<br>');
@@ -632,9 +613,9 @@ function renderSignatureCards(signatures, integrity) {
       chainHtml += `</div></div>`;
     }
 
-function certRow(label, value) {
-  return `<div style="display:flex;justify-content:flex-start;gap:0.5rem;padding:0.2rem 0;border-bottom:1px solid var(--border);"><div style="font-weight:500;color:var(--text-secondary);font-size:0.7rem;">${esc(label)}:</div><div style="color:var(--text);font-family:monospace;font-size:0.65rem;word-break:break-all;">${esc(value)}</div></div>`;
-}
+    function certRow(label, value) {
+      return `<div style="display:flex;justify-content:space-between;gap:0.5rem;padding:0.2rem 0;border-bottom:1px solid var(--border);"><div style="font-weight:500;color:var(--text-secondary);font-size:0.7rem;">${esc(label)}:</div><div style="color:var(--text);text-align:right;font-family:monospace;font-size:0.65rem;word-break:break-all;">${esc(value)}</div></div>`;
+    }
 
     return (
       `<div class="signature-card" style="margin-bottom:1rem;padding:0.9rem;background:var(--bg-secondary);border-radius:var(--radius);border-left:4px solid ${bar};">` +

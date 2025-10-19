@@ -61,7 +61,7 @@ body {
 
 .header {
   text-align: center;
-  margin-bottom: var(--spacing-2xl);
+  margin-bottom: var(--spacing-xl);
 }
 
 .logo {
@@ -87,6 +87,27 @@ body {
   margin-top: var(--spacing-xs);
 }
 
+.explainer-section {
+  text-align: center;
+  margin-bottom: var(--spacing-xl);
+  padding: 0 var(--spacing-md);
+}
+
+.explainer-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: var(--spacing-sm);
+  line-height: 1.4;
+}
+
+.explainer-subtitle {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  font-weight: 400;
+  line-height: 1.5;
+}
+
 .upload-card {
   background: var(--bg);
   border-radius: var(--radius-xl);
@@ -97,7 +118,7 @@ body {
 }
 
 .upload-area {
-  padding: var(--spacing-2xl);
+  padding: var(--spacing-xl);
   text-align: center;
   border: 2px dashed var(--border);
   border-radius: var(--radius-lg);
@@ -121,7 +142,7 @@ body {
 }
 
 .upload-icon {
-  margin-bottom: var(--spacing-md);
+  margin-bottom: var(--spacing);
   transition: transform 0.3s ease;
 }
 
@@ -138,7 +159,7 @@ body {
 
 .upload-area p {
   color: var(--text-secondary);
-  margin-bottom: var(--spacing-lg);
+  margin-bottom: var(--spacing-md);
   font-size: 1rem;
   font-weight: 400;
 }
@@ -611,9 +632,17 @@ body {
   .container {
     padding: var(--spacing-lg) var(--spacing-md);
   }
+
+  .explainer-title {
+    font-size: 1.125rem;
+  }
+
+  .explainer-subtitle {
+    font-size: 0.8125rem;
+  }
   
   .upload-area {
-    padding: var(--spacing-xl) var(--spacing-md);
+    padding: var(--spacing-lg) var(--spacing-md);
     margin: var(--spacing-md);
   }
   
@@ -684,6 +713,14 @@ body {
   
   .header-subtitle {
     font-size: 0.875rem;
+  }
+
+  .explainer-title {
+    font-size: 1rem;
+  }
+
+  .explainer-subtitle {
+    font-size: 0.75rem;
   }
   
   .upload-area h2 {
