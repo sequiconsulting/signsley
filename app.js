@@ -507,7 +507,11 @@ function displayResults(result) {
   function addIfPresent(label, value) {
     if (value && value !== 'Unknown') html += row(label, esc(value));
   }
-
+  // Document integrity status
+    if (integrityMsg && !(result?.error === 'No digital signature detected')) {
+    html += row('Document Integrity', `${integrityMsg.status} — ${integrityMsg.detail}`, integrityMsg.color);
+  }
+  
   resultDetails.innerHTML = html;
   results.classList.add('show');
 }
