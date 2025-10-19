@@ -284,11 +284,17 @@ body {
 
 .result-header {
   display: flex;
+  flex-direction: column;
   align-items: center;
+  text-align: center;
   gap: var(--spacing-md);
   margin-bottom: var(--spacing-xl);
   padding-bottom: var(--spacing-md);
   border-bottom: 2px solid var(--border-light);
+}
+
+.result-header > div:nth-child(2) {
+  width: 100%;
 }
 
 .result-icon {
@@ -650,11 +656,6 @@ body {
     padding: var(--spacing-lg);
   }
   
-  .result-header {
-    flex-direction: column;
-    text-align: center;
-    gap: var(--spacing);
-  }
 
   .result-header h3 {
     font-size: 1.25rem;
