@@ -310,22 +310,40 @@ function parseDirectly(signatureHex) {
   return forge.pkcs7.messageFromAsn1(asn1);
 }
 
+// FIXED: Improved signer certificate selection
 function selectSignerCert(p7) {
   try {
-    const patterns = ['YOUSIGN', 'Sequi', 'Samuele', 'Trevor', 'Fitzpatrick', 'Hughes', 'Greensley', 'Amelie', 'Beck', 'Garcia'];
-    for (const pattern of patterns) {
-      const patternCert = (p7.certificates || []).find(c => {
-        try {
-          const cn = c.subject.attributes.find(a => a.shortName === 'CN')?.value || '';
-          const org = c.subject.attributes.find(a => a.shortName === 'O')?.value || '';
-          return (cn.toLowerCase().includes(pattern.toLowerCase()) || org.toLowerCase().includes(pattern.toLowerCase())) && !cn.includes('CA') && !cn.includes('ROOT');
-        } catch { return false; }
-      });
-      if (patternCert) return patternCert;
+    if (!p7.certificates || p7.certificates.length === 0) return null;
+    
+    // Strategy 1: Find end-entity certificate (leaf certificate)
+    // The signer is the certificate that is NOT an issuer of any other certificate
+    const issuerCNs = new Set();
+    p7.certificates.forEach(cert => {
+      const issuerCN = cert.issuer.attributes.find(a => a.shortName === 'CN')?.value;
+      if (issuerCN) issuerCNs.add(issuerCN.toLowerCase());
+    });
+    
+    for (const cert of p7.certificates) {
+      if (isSelfSignedCertificate(cert)) continue; // Skip self-signed (root CAs)
+      
+      const subjectCN = cert.subject.attributes.find(a => a.shortName === 'CN')?.value;
+      if (subjectCN && !issuerCNs.has(subjectCN.toLowerCase())) {
+        // This certificate is not an issuer of any other cert - it's the end entity
+        return cert;
+      }
     }
-    const nonSelfSigned = (p7.certificates || []).find(c => !isSelfSignedCertificate(c));
-    if (nonSelfSigned) return nonSelfSigned;
-    return p7.certificates && p7.certificates[0];
+    
+    // Strategy 2: Find the only non-self-signed certificate
+    const nonSelfSigned = p7.certificates.filter(c => !isSelfSignedCertificate(c));
+    if (nonSelfSigned.length === 1) return nonSelfSigned[0];
+    
+    // Strategy 3: Return last non-self-signed certificate
+    for (let i = p7.certificates.length - 1; i >= 0; i--) {
+      if (!isSelfSignedCertificate(p7.certificates[i])) return p7.certificates[i];
+    }
+    
+    // Fallback: return first certificate
+    return p7.certificates[0];
   } catch {
     return p7.certificates && p7.certificates[0];
   }
