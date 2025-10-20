@@ -352,7 +352,22 @@ function selectSignerCert(p7) {
 function computePdfByteRangeDigest(buffer, byteRange, hashAlg) {
   if (!byteRange || byteRange.length !== 4) return null;
   const [a1, l1, a2, l2] = byteRange;
-  if (a1 < 0 || l1 < 0 || a2 < 0 || l2 < 0 || a1 + l1 > buffer.length || a2 + l2 > buffer.length) return null;
+  
+  // Validate ByteRange structure
+  if (a1 < 0 || l1 < 0 || a2 < 0 || l2 < 0) return null;
+  if (a1 + l1 > a2) {
+    throw new Error('Document tampered: Invalid ByteRange overlap');
+  }
+  
+  const fileSize = buffer.length;
+  
+  // Check if ByteRange references bytes beyond file size
+  if (a1 + l1 > fileSize || a2 + l2 > fileSize) {
+    throw new Error(`Document tampered: ByteRange references bytes beyond file size`);
+  }
+  
+  // Note: We allow totalCovered < fileSize here (checked in handler for last signature)
+  
   const md = forge.md[hashAlg].create();
   const part1 = buffer.subarray(a1, a1 + l1);
   const part2 = buffer.subarray(a2, a2 + l2);
@@ -384,6 +399,16 @@ function verifySignatureCryptographically(p7, pdfBuffer, byteRange) {
   let isStructureOnly = false;
 
   try {
+    // ADDED: Check ByteRange integrity first
+    if (byteRange) {
+      try {
+        const testDigest = computePdfByteRangeDigest(pdfBuffer, byteRange, 'sha256');
+        if (!testDigest) throw new Error('ByteRange validation failed');
+      } catch (e) {
+        return { valid: false, error: e.message, structureOnly: false, tampered: true };
+      }
+    }
+
     const hasRawCapture = p7.rawCapture && p7.rawCapture.signature;
     const hasCertificates = p7.certificates && p7.certificates.length > 0;
 
@@ -453,7 +478,6 @@ function verifySignatureCryptographically(p7, pdfBuffer, byteRange) {
 
   return { valid: signatureValid, error: verificationError, structureOnly: isStructureOnly };
 }
-
 function buildAndValidateCertificateChain(certificates, signingTime = null) {
   const chainValidation = {
     valid: false, 
@@ -922,6 +946,7 @@ exports.handler = async (event) => {
           format: 'PAdES', 
           fileName, 
           structureValid: false,
+          documentIntact: false,
           error: 'No digital signature detected',
           verificationTimestamp,
           processingTime: Date.now() - startTime
@@ -949,8 +974,60 @@ exports.handler = async (event) => {
           format: 'PAdES', 
           fileName,
           structureValid: true, 
-          cryptographicVerification: false, 
+          cryptographicVerification: false,
+          documentIntact: false,
           error: 'Signature parsing failed',
+          verificationTimestamp,
+          processingTime: Date.now() - startTime
+        })
+      };
+    }
+
+    // Check if last signature covers entire file
+    if (sigInfo && workingSig && workingSig.byteRange) {
+      const [a1, l1, a2, l2] = workingSig.byteRange;
+      const totalCovered = a2 + l2;
+      const fileSize = buffer.length;
+      
+      // For the LAST signature found, check if it covers the whole file
+      if (totalCovered < fileSize) {
+        const bytesAfter = fileSize - totalCovered;
+        const afterContent = buffer.subarray(totalCovered, Math.min(totalCovered + 500, fileSize)).toString('latin1');
+        
+        // Check if it's valid PDF content (objects, xref, trailer, etc.)
+        const isValidPDF = /^[\r\n\s]*(\d+\s+\d+\s+obj|xref|trailer|startxref|%|<<|\/ByteRange)/.test(afterContent);
+        
+        if (!isValidPDF) {
+          return {
+            statusCode: 200, headers,
+            body: JSON.stringify({
+              valid: false,
+              format: 'PAdES',
+              fileName,
+              structureValid: true,
+              documentIntact: false,
+              error: `Document modified: ${bytesAfter} bytes of non-PDF content added after last signature`,
+              verificationTimestamp,
+              processingTime: Date.now() - startTime
+            })
+          };
+        }
+      }
+    }
+
+    // Check for tampered flag from verification
+    if (sigInfo.error && sigInfo.error.includes('tampered')) {
+      return {
+        statusCode: 200, headers,
+        body: JSON.stringify({
+          valid: false,
+          format: 'PAdES',
+          fileName,
+          structureValid: true,
+          documentIntact: false,
+          cryptographicVerification: false,
+          error: sigInfo.error,
+          warnings: ['Document has been modified after signing'],
           verificationTimestamp,
           processingTime: Date.now() - startTime
         })
@@ -963,6 +1040,7 @@ exports.handler = async (event) => {
       format: 'PAdES',
       fileName,
       structureValid: true,
+      documentIntact: sigInfo.valid && sigInfo.signatureValid,
       cryptographicVerification: !isStructureOnly,
       signatureValid: sigInfo.signatureValid,
       certificateValid: sigInfo.certificateValid,
@@ -1010,6 +1088,7 @@ exports.handler = async (event) => {
         error: 'Verification failed', 
         message: error.message, 
         valid: false,
+        documentIntact: false,
         verificationTimestamp,
         processingTime: Date.now() - startTime 
       }) 
