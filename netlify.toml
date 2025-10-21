@@ -15,7 +15,7 @@
     X-XSS-Protection = "1; mode=block"
     Referrer-Policy = "strict-origin-when-cross-origin"
     Permissions-Policy = "geolocation=(), microphone=(), camera=(), payment=()"
-    Content-Security-Policy = "default-src 'self'; script-src 'self' 'sha256-Y0VqNJPHtE1jgFLfZLgImLRVVQGdHvLHvlzqDvV8g6g=' 'sha256-6HgLzFg9P3VfD0iG8y7c/Wh3p+9YVVk4H8aR3xW3rZI='; style-src 'self' https://fonts.googleapis.com; img-src 'self' data:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https://*.netlify.app https://*.netlify.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https://*.netlify.app https://*.netlify.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
 
 [[redirects]]
   from = "/api/*"

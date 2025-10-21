@@ -280,6 +280,317 @@ async function checkCertificateRevocation(cert, issuerCert = null) {
   return status;
 }
 
+function getOidName(oid) {
+  const oids = forge.pki.oids;
+  const map = {
+    [oids.sha1]: 'sha1',
+    [oids.sha256]: 'sha256',
+    [oids.sha384]: 'sha384',
+    [oids.sha512]: 'sha512',
+    '1.2.840.113549.1.1.5': 'sha1',
+    '1.2.840.113549.1.1.11': 'sha256',
+    '1.2.840.113549.1.1.12': 'sha384',
+    '1.2.840.113549.1.1.13': 'sha512'
+  };
+  return map[oid] || 'sha256';
+}
+
+function validateCertificateAtSigningTime(cert, signingTime = null) {
+  const now = new Date();
+  let validationDate = now;
+  
+  if (signingTime) {
+    try {
+      const sigDate = new Date(signingTime);
+      if (!isNaN(sigDate.getTime()) && sigDate <= now) {
+        validationDate = sigDate;
+      }
+    } catch {}
+  }
+  
+  const certValid = validationDate >= cert.validity.notBefore && validationDate <= cert.validity.notAfter;
+  const expiredNow = now > cert.validity.notAfter;
+  
+  return {
+    validAtSigningTime: certValid,
+    validNow: !expiredNow,
+    expiredSinceSigning: certValid && expiredNow,
+    validationDate: validationDate
+  };
+}
+
+function selectSignerCertificate(certificates) {
+  if (!certificates || certificates.length === 0) return null;
+  
+  try {
+    // Strategy 1: Find end-entity certificate (not an issuer of any other cert)
+    const issuerDNs = new Set();
+    certificates.forEach(cert => {
+      const issuerDN = cert.issuer.attributes
+        .map(a => `${a.shortName}=${a.value.trim()}`)
+        .sort()
+        .join(',')
+        .toLowerCase();
+      issuerDNs.add(issuerDN);
+    });
+    
+    for (const cert of certificates) {
+      if (isSelfSignedCertificate(cert)) continue;
+      
+      const subjectDN = cert.subject.attributes
+        .map(a => `${a.shortName}=${a.value.trim()}`)
+        .sort()
+        .join(',')
+        .toLowerCase();
+      
+      if (!issuerDNs.has(subjectDN)) {
+        return cert;
+      }
+    }
+    
+    // Strategy 2: Find the only non-self-signed certificate
+    const nonSelfSigned = certificates.filter(c => !isSelfSignedCertificate(c));
+    if (nonSelfSigned.length === 1) return nonSelfSigned[0];
+    
+    // Strategy 3: Return last non-self-signed certificate
+    for (let i = certificates.length - 1; i >= 0; i--) {
+      if (!isSelfSignedCertificate(certificates[i])) return certificates[i];
+    }
+    
+    // Fallback
+    return certificates[0];
+  } catch {
+    return certificates[0];
+  }
+}
+
+function buildCertificateChain(certificates) {
+  const chain = [];
+  
+  if (!certificates || certificates.length === 0) return chain;
+  
+  try {
+    // Build ordered chain
+    const certMap = new Map();
+    certificates.forEach(cert => {
+      const subjectDN = cert.subject.attributes
+        .map(a => `${a.shortName}=${a.value.trim()}`)
+        .sort()
+        .join(',');
+      certMap.set(subjectDN, cert);
+    });
+    
+    // Start with end-entity
+    const signerCert = selectSignerCertificate(certificates);
+    const orderedCerts = [];
+    const visited = new Set();
+    let current = signerCert;
+    
+    while (current && !visited.has(current)) {
+      visited.add(current);
+      orderedCerts.push(current);
+      
+      if (isSelfSignedCertificate(current)) break;
+      
+      const issuerDN = current.issuer.attributes
+        .map(a => `${a.shortName}=${a.value.trim()}`)
+        .sort()
+        .join(',');
+      
+      current = certMap.get(issuerDN);
+    }
+    
+    // Build chain info
+    orderedCerts.forEach((cert, idx) => {
+      const subject = cert.subject.attributes.map(a => `${a.shortName}=${a.value}`).join(', ');
+      const issuer = cert.issuer.attributes.map(a => `${a.shortName}=${a.value}`).join(', ');
+      const selfSigned = isSelfSignedCertificate(cert);
+      
+      let role = 'intermediate-ca';
+      if (selfSigned) {
+        role = 'root-ca';
+      } else if (idx === 0) {
+        role = 'end-entity';
+      }
+      
+      chain.push({
+        position: idx + 1,
+        subject,
+        issuer,
+        serialNumber: cert.serialNumber,
+        validFrom: formatDate(cert.validity.notBefore),
+        validTo: formatDate(cert.validity.notAfter),
+        isSelfSigned: selfSigned,
+        publicKeyAlgorithm: cert.publicKey.algorithm || 'RSA',
+        keySize: cert.publicKey.n ? cert.publicKey.n.bitLength() : 'Unknown',
+        role: role
+      });
+    });
+  } catch {}
+  
+  return chain;
+}
+
+function validateCertificateChain(certificates, signingTime = null) {
+  const validation = {
+    valid: false,
+    errors: [],
+    chainLength: certificates ? certificates.length : 0
+  };
+  
+  if (!certificates || certificates.length === 0) {
+    validation.errors.push('No certificates in chain');
+    return validation;
+  }
+  
+  try {
+    const orderedCerts = [];
+    const signerCert = selectSignerCertificate(certificates);
+    const certMap = new Map();
+    
+    certificates.forEach(cert => {
+      const subjectDN = cert.subject.attributes
+        .map(a => `${a.shortName}=${a.value.trim()}`)
+        .sort()
+        .join(',');
+      certMap.set(subjectDN, cert);
+    });
+    
+    const visited = new Set();
+    let current = signerCert;
+    
+    while (current && !visited.has(current)) {
+      visited.add(current);
+      orderedCerts.push(current);
+      
+      if (isSelfSignedCertificate(current)) break;
+      
+      const issuerDN = current.issuer.attributes
+        .map(a => `${a.shortName}=${a.value.trim()}`)
+        .sort()
+        .join(',');
+      
+      current = certMap.get(issuerDN);
+    }
+    
+    // Validate chain
+    const now = new Date();
+    let validationDate = now;
+    
+    if (signingTime) {
+      try {
+        const sigDate = new Date(signingTime);
+        if (!isNaN(sigDate.getTime()) && sigDate <= now) {
+          validationDate = sigDate;
+        }
+      } catch {}
+    }
+    
+    let chainValid = true;
+    
+    for (let i = 0; i < orderedCerts.length; i++) {
+      const cert = orderedCerts[i];
+      
+      // Check validity period
+      if (validationDate < cert.validity.notBefore || validationDate > cert.validity.notAfter) {
+        const certInfo = extractCertificateInfo(cert);
+        validation.errors.push(`Certificate expired or not yet valid: ${certInfo.commonName}`);
+        if (i === 0) chainValid = false; // Only fail if signer cert is invalid
+      }
+      
+      // Verify signature with issuer
+      if (i < orderedCerts.length - 1) {
+        const issuerCert = orderedCerts[i + 1];
+        try {
+          const verified = issuerCert.verify(cert);
+          if (!verified) {
+            const certInfo = extractCertificateInfo(cert);
+            validation.errors.push(`Certificate signature verification failed: ${certInfo.commonName}`);
+            chainValid = false;
+          }
+        } catch (e) {
+          validation.errors.push(`Chain verification error: ${e.message}`);
+        }
+      }
+    }
+    
+    validation.valid = chainValid;
+  } catch (e) {
+    validation.errors.push(`Chain validation error: ${e.message}`);
+  }
+  
+  return validation;
+}
+
+// CRITICAL: Compare signatures by time to detect ordering issues
+function compareSignaturesByTime(signatures) {
+  if (!signatures || signatures.length === 0) return [];
+  
+  const withTime = signatures.filter(sig => sig.rawSigningTime);
+  const withoutTime = signatures.filter(sig => !sig.rawSigningTime);
+  
+  // Sort signatures with time
+  withTime.sort((a, b) => {
+    const timeA = new Date(a.rawSigningTime).getTime();
+    const timeB = new Date(b.rawSigningTime).getTime();
+    return timeA - timeB;
+  });
+  
+  // Append signatures without time at the end
+  return [...withTime, ...withoutTime];
+}
+
+// CRITICAL: Detect incremental updates after signature
+function detectIncrementalUpdates(unsignedContent) {
+  if (!unsignedContent || unsignedContent.length === 0) {
+    return { detected: false, reason: '' };
+  }
+  
+  const unsignedStr = unsignedContent.toString('latin1');
+  
+  // Check for incremental update markers
+  const hasEOF = unsignedStr.includes('%%EOF');
+  const hasXref = unsignedStr.includes('xref');
+  const hasTrailer = unsignedStr.includes('trailer');
+  const hasStartxref = unsignedStr.includes('startxref');
+  
+  if (hasEOF) {
+    return {
+      detected: true,
+      reason: 'Incremental update detected - additional %%EOF marker found after signature'
+    };
+  }
+  
+  if (hasXref && hasTrailer) {
+    return {
+      detected: true,
+      reason: 'Incremental update detected - xref/trailer structure found after signature'
+    };
+  }
+  
+  if (hasStartxref) {
+    return {
+      detected: true,
+      reason: 'Incremental update detected - startxref found after signature'
+    };
+  }
+  
+  // Check for significant content (not just whitespace/metadata)
+  const strippedContent = unsignedStr.replace(/[\s\r\n]/g, '');
+  if (strippedContent.length > 100) {
+    // Check for PDF objects
+    const hasObjects = /\d+\s+\d+\s+obj/.test(unsignedStr);
+    if (hasObjects) {
+      return {
+        detected: true,
+        reason: 'Incremental update detected - PDF objects found after signature'
+      };
+    }
+  }
+  
+  return { detected: false, reason: '' };
+}
+
 module.exports = {
   formatDate,
   isSelfSignedCertificate,
@@ -288,5 +599,12 @@ module.exports = {
   extractCRLUrl,
   performSimplifiedOCSPCheck,
   performCRLCheck,
-  checkCertificateRevocation
+  checkCertificateRevocation,
+  getOidName,
+  validateCertificateAtSigningTime,
+  selectSignerCertificate,
+  buildCertificateChain,
+  validateCertificateChain,
+  compareSignaturesByTime,
+  detectIncrementalUpdates
 };

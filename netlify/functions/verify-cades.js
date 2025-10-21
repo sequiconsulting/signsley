@@ -1,65 +1,14 @@
 const forge = require('node-forge');
-const https = require('https');
-const http = require('http');
-
-function formatDate(date) {
-  if (!date) return 'Unknown';
-  try {
-    const d = date instanceof Date ? date : new Date(date);
-    if (isNaN(d.getTime())) return 'Unknown';
-    return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
-  } catch {
-    return 'Unknown';
-  }
-}
-
-// FIXED: Enhanced self-signed certificate detection
-function isSelfSignedCertificate(cert) {
-  try {
-    if (typeof cert.isIssuer === 'function') {
-      return cert.isIssuer(cert);
-    }
-
-    const normalizeDN = (attributes) => {
-      try {
-        return attributes
-          .map(attr => `${attr.shortName || attr.name}=${(attr.value || '').trim().toLowerCase()}`)
-          .sort()
-          .join(',');
-      } catch {
-        return '';
-      }
-    };
-
-    return normalizeDN(cert.subject.attributes) === normalizeDN(cert.issuer.attributes);
-  } catch {
-    return false;
-  }
-}
-
-function extractCertificateInfo(cert) {
-  const info = { 
-    commonName: 'Unknown', 
-    organization: 'Unknown', 
-    email: 'Unknown', 
-    issuer: 'Unknown', 
-    serialNumber: 'Unknown' 
-  };
-
-  try {
-    cert.subject.attributes.forEach(attr => {
-      if (attr.shortName === 'CN') info.commonName = attr.value;
-      if (attr.shortName === 'O') info.organization = attr.value;
-      if (attr.shortName === 'emailAddress') info.email = attr.value;
-    });
-    cert.issuer.attributes.forEach(attr => { 
-      if (attr.shortName === 'CN') info.issuer = attr.value; 
-    });
-    info.serialNumber = cert.serialNumber;
-  } catch {}
-
-  return info;
-}
+const {
+  formatDate,
+  isSelfSignedCertificate,
+  extractCertificateInfo,
+  checkCertificateRevocation,
+  selectSignerCertificate,
+  buildCertificateChain,
+  validateCertificateChain,
+  validateCertificateAtSigningTime
+} = require('./shared-utils');
 
 function tryParseCAdES(buffer) {
   const strategies = [
@@ -88,21 +37,16 @@ function parseDirectPKCS7(buffer) {
 }
 
 function parseWithStripping(buffer) {
-  // Remove potential padding or header bytes
   let cleaned = buffer;
-
-  // Remove leading zeros
   while (cleaned.length > 0 && cleaned[0] === 0) {
     cleaned = cleaned.slice(1);
   }
-
   const der = forge.util.createBuffer(cleaned.toString('binary'));
   const asn1 = forge.asn1.fromDer(der);
   return forge.pkcs7.messageFromAsn1(asn1);
 }
 
 function parseFromHex(buffer) {
-  // Try parsing as hex string if it looks like hex
   const str = buffer.toString('utf8');
   if (/^[0-9a-fA-F\s]+$/.test(str.trim())) {
     const hex = str.replace(/\s+/g, '');
@@ -115,153 +59,75 @@ function parseFromHex(buffer) {
 }
 
 function parseWithRelaxedValidation(buffer) {
-  // More lenient parsing for malformed structures
   const der = forge.util.createBuffer(buffer.toString('binary'));
   const asn1 = forge.asn1.fromDer(der);
   return forge.pkcs7.messageFromAsn1(asn1);
 }
 
-// FIXED: Enhanced revocation checking for CAdES
-async function checkCertificateRevocation(cert, issuerCert = null) {
-  const status = { 
-    checked: false, 
-    revoked: false, 
-    method: null, 
-    error: null,
-    details: null
+function extractSigningTime(p7) {
+  try {
+    if (p7.rawCapture && p7.rawCapture.authenticatedAttributes) {
+      for (let attr of p7.rawCapture.authenticatedAttributes) {
+        const oid = forge.asn1.derToOid(attr.value[0].value);
+        if (oid === forge.pki.oids.signingTime || oid === '1.2.840.113549.1.9.5') {
+          const timeValue = attr.value[1].value[0].value;
+          return formatDate(new Date(timeValue));
+        }
+      }
+    }
+  } catch {}
+  return null;
+}
+
+function extractRawSigningTime(p7) {
+  try {
+    if (p7.rawCapture && p7.rawCapture.authenticatedAttributes) {
+      for (let attr of p7.rawCapture.authenticatedAttributes) {
+        const oid = forge.asn1.derToOid(attr.value[0].value);
+        if (oid === forge.pki.oids.signingTime || oid === '1.2.840.113549.1.9.5') {
+          const timeValue = attr.value[1].value[0].value;
+          return new Date(timeValue);
+        }
+      }
+    }
+  } catch {}
+  return null;
+}
+
+// CAdES integrity verification - limited by detached signature nature
+function verifyCAdESStructure(p7) {
+  const result = {
+    intact: null,
+    reason: '',
+    structureValid: false,
+    error: null
   };
 
   try {
-    // Extract OCSP URL
-    const ocspUrl = extractOCSPUrl(cert);
-    if (ocspUrl && issuerCert) {
-      try {
-        const result = await performOCSPCheck(cert, issuerCert, ocspUrl);
-        status.checked = true;
-        status.revoked = result.revoked;
-        status.method = 'OCSP';
-        status.details = result.details;
-        return status;
-      } catch (e) {
-        status.error = `OCSP failed: ${e.message}`;
-      }
+    const hasCertificates = p7.certificates && p7.certificates.length > 0;
+    const hasSignature = p7.rawCapture && p7.rawCapture.signature;
+
+    if (!hasCertificates) {
+      result.reason = 'No certificates found in CAdES structure';
+      return result;
     }
 
-    // Fallback to CRL
-    const crlUrl = extractCRLUrl(cert);
-    if (crlUrl) {
-      try {
-        const result = await performCRLCheck(cert, crlUrl);
-        status.checked = true;
-        status.revoked = result.revoked;
-        status.method = 'CRL';
-        status.details = result.details;
-        return status;
-      } catch (e) {
-        status.error = `CRL failed: ${e.message}`;
-      }
+    if (!hasSignature) {
+      result.reason = 'No signature data found in CAdES structure';
+      return result;
     }
 
-    if (!ocspUrl && !crlUrl) {
-      status.error = 'No revocation endpoints found';
-    }
+    // CAdES signatures are typically detached - we can only verify structure
+    result.structureValid = true;
+    result.intact = null;
+    result.reason = 'CAdES structure valid - content not available for cryptographic verification';
+
+    return result;
   } catch (e) {
-    status.error = `Revocation check error: ${e.message}`;
+    result.error = `Structure verification error: ${e.message}`;
+    result.reason = 'Cannot verify CAdES structure';
+    return result;
   }
-
-  return status;
-}
-
-function extractOCSPUrl(cert) {
-  try {
-    if (!cert.extensions) return null;
-
-    for (const ext of cert.extensions) {
-      if (ext.name === 'authorityInfoAccess' || ext.id === '1.3.6.1.5.5.7.1.1') {
-        if (ext.value) {
-          const urlMatch = ext.value.match(/OCSP[^:]*:\s*(https?:\/\/[^\s<>]+)/i) ||
-                           ext.value.match(/URI:\s*(https?:\/\/[^\s<>]*ocsp[^\s<>]*)/i);
-          if (urlMatch) return urlMatch[1].trim();
-        }
-      }
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-function extractCRLUrl(cert) {
-  try {
-    if (!cert.extensions) return null;
-
-    for (const ext of cert.extensions) {
-      if (ext.name === 'cRLDistributionPoints' || ext.id === '2.5.29.31') {
-        if (ext.value) {
-          const urlMatch = ext.value.match(/URI:\s*(https?:\/\/[^\s<>]+\.crl)/i);
-          if (urlMatch) return urlMatch[1].trim();
-        }
-      }
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-async function performOCSPCheck(cert, issuerCert, ocspUrl) {
-  // Simplified OCSP implementation - in production, use proper OCSP library
-  return { revoked: false, details: 'OCSP check performed (simplified)' };
-}
-
-async function performCRLCheck(cert, crlUrl) {
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('CRL timeout')), 15000);
-    const httpModule = crlUrl.startsWith('https:') ? https : http;
-
-    const req = httpModule.get(crlUrl, (res) => {
-      clearTimeout(timeout);
-      if (res.statusCode !== 200) {
-        reject(new Error(`CRL HTTP ${res.statusCode}`));
-        return;
-      }
-
-      const chunks = [];
-      res.on('data', c => chunks.push(c));
-      res.on('end', () => {
-        try {
-          const crlData = Buffer.concat(chunks);
-          const der = forge.util.createBuffer(crlData.toString('binary'));
-          const asn1 = forge.asn1.fromDer(der);
-          const crl = forge.pki.crlFromAsn1(asn1);
-
-          const serialToCheck = cert.serialNumber.toLowerCase().replace(/:/g, '');
-          let revoked = false;
-
-          if (crl.revokedCertificates) {
-            for (const rc of crl.revokedCertificates) {
-              if (rc.serialNumber.toLowerCase().replace(/:/g, '') === serialToCheck) {
-                revoked = true;
-                break;
-              }
-            }
-          }
-
-          resolve({ 
-            revoked, 
-            details: `CRL checked, ${crl.revokedCertificates ? crl.revokedCertificates.length : 0} revoked certificates`
-          });
-        } catch (e) {
-          reject(new Error(`CRL parse error: ${e.message}`));
-        }
-      });
-    });
-
-    req.on('error', (e) => {
-      clearTimeout(timeout);
-      reject(new Error(`CRL request error: ${e.message}`));
-    });
-  });
 }
 
 exports.handler = async (event) => {
@@ -276,6 +142,7 @@ exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') return { statusCode: 405, headers, body: JSON.stringify({ error: 'Method not allowed', valid: false }) };
 
   const startTime = Date.now();
+  const verificationTimestamp = new Date().toISOString();
 
   try {
     const body = JSON.parse(event.body);
@@ -298,9 +165,12 @@ exports.handler = async (event) => {
           format: 'CAdES (CMS Advanced Electronic Signature)',
           fileName,
           structureValid: false,
+          documentIntact: null,
+          integrityReason: 'Unable to parse PKCS#7/CMS structure',
           error: 'Unable to parse PKCS#7/CMS structure',
           warnings: ['File does not contain a valid CAdES signature'],
           troubleshooting: ['Verify the file is a valid CAdES/PKCS#7 signature', 'Check file integrity'],
+          verificationTimestamp,
           processingTime: Date.now() - startTime
         })
       };
@@ -314,60 +184,59 @@ exports.handler = async (event) => {
           format: 'CAdES (CMS Advanced Electronic Signature)',
           fileName,
           structureValid: true,
+          documentIntact: null,
+          integrityReason: 'No certificates found in signature',
           error: 'No certificates found in signature',
           warnings: ['PKCS#7 structure found but no certificates'],
           troubleshooting: ['The signature may be detached', 'Certificates may be stored separately'],
+          verificationTimestamp,
           processingTime: Date.now() - startTime
         })
       };
     }
 
-    const signerCert = p7.certificates[0]; // For CAdES, typically first cert is signer
+    const rawSigningTime = extractRawSigningTime(p7);
+    const signingTime = extractSigningTime(p7);
+    
+    const signerCert = selectSignerCertificate(p7.certificates);
     const certInfo = extractCertificateInfo(signerCert);
+    const certValidation = validateCertificateAtSigningTime(signerCert, rawSigningTime);
+    const chainValidation = validateCertificateChain(p7.certificates, rawSigningTime);
 
-    // Certificate validity check
-    const now = new Date();
-    const certValid = now >= signerCert.validity.notBefore && now <= signerCert.validity.notAfter;
-
-    // Check if self-signed
-    const selfSigned = isSelfSignedCertificate(signerCert);
-
-    // Enhanced revocation checking
     let revocationStatus = null;
     try {
-      const issuerCert = p7.certificates.length > 1 ? p7.certificates[1] : null;
+      const orderedChain = buildCertificateChain(p7.certificates);
+      const issuerCert = orderedChain.length > 1 ?
+        p7.certificates.find(c => extractCertificateInfo(c).commonName === orderedChain[1].issuer.split('CN=')[1]?.split(',')[0]) :
+        (p7.certificates.length > 1 ? p7.certificates[1] : null);
       revocationStatus = await checkCertificateRevocation(signerCert, issuerCert);
     } catch (e) {
-      console.log('Revocation check failed:', e.message);
       revocationStatus = { checked: false, revoked: false, error: e.message };
     }
 
-    // Basic signature validation
-    let signatureValid = false;
-    let verificationError = null;
+    // Verify CAdES structure
+    const integrityResult = verifyCAdESStructure(p7);
 
-    try {
-      // For CAdES, we perform structure validation
-      // Full cryptographic verification would require the original content
-      signatureValid = true; // Structure is valid
-      verificationError = 'Structure-only verification - content not available for full crypto verification';
-    } catch (e) {
-      signatureValid = false;
-      verificationError = `Verification error: ${e.message}`;
-    }
+    const certificateChain = buildCertificateChain(p7.certificates);
+    const isSelfSigned = isSelfSignedCertificate(signerCert);
 
-    const isValid = signatureValid && certValid && !(revocationStatus && revocationStatus.revoked);
-
+    // For CAdES, we cannot determine document integrity without original content
     const result = {
-      valid: isValid,
+      valid: false, // Always false for CAdES without original content
       format: 'CAdES (CMS Advanced Electronic Signature)',
       fileName,
-      structureValid: true,
-      cryptographicVerification: false, // Content not available for full verification
-      signatureValid: signatureValid,
-      certificateValid: certValid,
-      chainValid: true, // Simplified for CAdES
-      chainValidationPerformed: false,
+      structureValid: integrityResult.structureValid,
+      documentIntact: integrityResult.intact,
+      integrityReason: integrityResult.reason,
+      cryptographicVerification: false,
+      signatureValid: integrityResult.structureValid,
+      certificateValid: certValidation.validAtSigningTime,
+      certificateValidAtSigning: certValidation.validAtSigningTime,
+      certificateExpiredSinceSigning: certValidation.expiredSinceSigning,
+      certificateValidNow: certValidation.validNow,
+      signingTimeUsed: signingTime,
+      chainValid: chainValidation.valid,
+      chainValidationPerformed: true,
       revocationChecked: revocationStatus ? revocationStatus.checked : false,
       revoked: revocationStatus ? revocationStatus.revoked : false,
       signedBy: certInfo.commonName,
@@ -377,42 +246,45 @@ exports.handler = async (event) => {
       certificateValidFrom: formatDate(signerCert.validity.notBefore),
       certificateValidTo: formatDate(signerCert.validity.notAfter),
       serialNumber: certInfo.serialNumber,
-      isSelfSigned: selfSigned,
+      isSelfSigned: isSelfSigned,
+      signatureDate: signingTime,
       certificateChainLength: p7.certificates.length,
-      signatureAlgorithm: 'RSA-SHA256', // Default assumption
+      signatureAlgorithm: 'RSA-SHA256',
+      certificateChain: certificateChain,
       warnings: [],
       troubleshooting: [],
+      verificationTimestamp,
       processingTime: Date.now() - startTime
     };
 
     // Add warnings
-    if (verificationError) {
-      result.warnings.push(verificationError);
-    }
-
-    if (!certValid) {
-      result.warnings.push('Certificate has expired or is not yet valid');
-    }
-
-    if (selfSigned) {
+    result.warnings.push('CAdES signatures require the original content for full cryptographic verification');
+    
+    if (isSelfSigned) {
       result.warnings.push('Self-signed certificate detected');
     }
-
-    if (revocationStatus && !revocationStatus.checked) {
-      result.warnings.push('Revocation status could not be verified');
-      if (revocationStatus.error) {
-        result.troubleshooting.push(`Revocation check: ${revocationStatus.error}`);
-      }
+    
+    if (!certValidation.validAtSigningTime) {
+      result.warnings.push('Certificate was not valid at signing time');
+    } else if (certValidation.expiredSinceSigning) {
+      result.warnings.push('Certificate expired after signing');
     }
-
+    
+    if (chainValidation.errors && chainValidation.errors.length > 0) {
+      result.warnings.push(...chainValidation.errors);
+    }
+    
+    if (revocationStatus && !revocationStatus.checked) {
+      result.troubleshooting.push(`Revocation check: ${revocationStatus.error || 'Could not verify'}`);
+    }
+    
     if (revocationStatus && revocationStatus.revoked) {
       result.warnings.push('Certificate has been revoked');
     }
 
-    result.troubleshooting.push('CAdES signatures require the original content for full verification');
-    result.troubleshooting.push('Use specialized CAdES validation software for complete verification');
+    result.troubleshooting.push('Use specialized CAdES validation software with original content for complete verification');
 
-    console.log(`CAdES verification complete. Valid: ${result.valid}`);
+    console.log(`CAdES verification complete. Structure valid: ${result.structureValid}`);
     return { statusCode: 200, headers, body: JSON.stringify(result) };
 
   } catch (error) {
@@ -424,6 +296,8 @@ exports.handler = async (event) => {
         error: 'Verification failed',
         message: error.message,
         valid: false,
+        documentIntact: null,
+        verificationTimestamp,
         processingTime: Date.now() - startTime
       })
     };
