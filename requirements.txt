@@ -1,26 +1,23 @@
-# Netlify Python Functions Requirements
-# This file is for Netlify's Python runtime
+# Essential dependencies for Netlify Python Functions
+# Keep minimal to avoid timeout during pip install
 
-# Core signature verification
-pyhanko==0.31.0
-cryptography>=41.0.0
+# Core signature verification - use older compatible versions
+pyhanko==0.25.0
+cryptography==41.0.7
 
 # PDF processing
-PyPDF2>=3.0.1
+PyPDF2==3.0.1
 
-# XML processing for XAdES
-lxml>=4.9.0
-defusedxml>=0.7.1
+# XML processing
+lxml==4.9.4
+defusedxml==0.7.1
 
-# HTTP client for revocation checking
-requests>=2.31.0
+# HTTP client 
+requests==2.31.0
 
-# Essential dependencies only (Netlify has size limits)
-click>=8.1.7
-typing-extensions>=4.8.0
+# Essential utilities only
+click==8.1.7
+typing-extensions==4.8.0
 
-# Logging
-loguru>=0.7.2
-
-# Date/time utilities
-python-dateutil>=2.8.2
+# Date handling
+python-dateutil==2.8.2
