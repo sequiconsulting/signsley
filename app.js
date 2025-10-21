@@ -1,4 +1,4 @@
-// Signsley v4.3 - Multiple signature integrity verification
+// Signsley v4.3 - Multiple signature integrity verification - Python Backend
 const uploadSection = document.getElementById('uploadSection');
 const fileInput = document.getElementById('fileInput');
 const browseBtn = document.getElementById('browseBtn');
@@ -116,12 +116,14 @@ function getFileExtension(fileName) {
 
 function determineEndpoint(file, arrayBuffer) {
   const ext = getFileExtension(file.name);
+  
+  // UPDATED: Use new Python backend endpoints
   const endpointMap = {
-    pdf: '/.netlify/functions/verify-pades',
-    xml: '/.netlify/functions/verify-xades',
-    p7m: '/.netlify/functions/verify-cades',
-    p7s: '/.netlify/functions/verify-cades',
-    sig: '/.netlify/functions/verify-cades'
+    pdf: '/api/verify-pades',
+    xml: '/api/verify-xades',
+    p7m: '/api/verify-cades',
+    p7s: '/api/verify-cades',
+    sig: '/api/verify-cades'
   };
 
   if (endpointMap[ext]) return endpointMap[ext];
@@ -129,9 +131,9 @@ function determineEndpoint(file, arrayBuffer) {
   const head = new Uint8Array(arrayBuffer.slice(0, 1024));
   const str = new TextDecoder('utf-8', { fatal: false }).decode(head);
 
-  if (str.includes('%PDF')) return '/.netlify/functions/verify-pades';
-  if (str.includes('<?xml') || str.includes('<')) return '/.netlify/functions/verify-xades';
-  return '/.netlify/functions/verify-cades';
+  if (str.includes('%PDF')) return '/api/verify-pades';
+  if (str.includes('<?xml') || str.includes('<')) return '/api/verify-xades';
+  return '/api/verify-cades';
 }
 
 function arrayBufferToBase64Optimized(buffer) {
@@ -378,6 +380,13 @@ function displayResults(result) {
     html += `<div style="font-size:0.8rem;color:var(--text-secondary);margin-top:0.2rem;">${multi.count} digital signatures</div>`;
     html += '</div>';
   }
+
+  // Show Python backend indicator
+  html += '<div class="signature-info-section" style="margin-bottom:1.25rem;padding:0.9rem 1rem;background:var(--bg-secondary);border-radius:var(--radius);border-left:4px solid #2196f3;">';
+  html += '<div style="font-size:0.875rem;font-weight:600;color:var(--text);margin-bottom:0.4rem;">🐍 Backend</div>';
+  html += '<div style="color:#2196f3;font-weight:500;font-size:0.875rem;">✅ Python + pyhanko 0.31</div>';
+  html += '<div style="font-size:0.8rem;color:var(--text-secondary);margin-top:0.2rem;">Advanced cryptographic verification</div>';
+  html += '</div>';
 
   // CRITICAL: Show which signatures failed if document is modified
   if (result.documentIntact === false && result.signatures && result.signatures.length > 0) {
