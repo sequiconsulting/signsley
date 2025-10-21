@@ -1,23 +1,88 @@
 [build]
-  publish = "."
-  command = "echo 'No build required'"
+  # Build command for Python backend
+  command = "pip install -r api/requirements.txt && python -m api.build_static"
+  # Publish directory
+  publish = "dist"
+  # Functions directory for Python serverless functions
   functions = "netlify/functions"
 
+[build.environment]
+  PYTHON_VERSION = "3.11"
+  # Set environment for production
+  ENVIRONMENT = "production"
+
+# Python runtime for Netlify Functions
 [functions]
-  node_bundler = "esbuild"
-  external_node_modules = ["canvas", "puppeteer"]
+  # Use Python 3.11 runtime
+  runtime = "python3.11"
+  # Set timeout to 30 seconds for signature verification
+  timeout = 30
+  # Enable large payloads for PDF files
+  max_age = 0
+
+# Redirect API calls to Python functions
+[[redirects]]
+  from = "/api/verify-pades"
+  to = "/.netlify/functions/verify-pades"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/verify-cades"
+  to = "/.netlify/functions/verify-cades"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/verify-xades"
+  to = "/.netlify/functions/verify-xades"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/health"
+  to = "/.netlify/functions/health"
+  status = 200
+  force = true
+
+# Serve static files
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Headers for security and CORS
+[[headers]]
+  for = "/api/*"
+  [headers.values]
+    Access-Control-Allow-Origin = "*"
+    Access-Control-Allow-Methods = "GET, POST, PUT, DELETE, OPTIONS"
+    Access-Control-Allow-Headers = "Content-Type, Authorization"
+    Access-Control-Max-Age = "86400"
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    X-XSS-Protection = "1; mode=block"
+    Referrer-Policy = "strict-origin-when-cross-origin"
 
 [[headers]]
   for = "/*"
   [headers.values]
-    X-Frame-Options = "DENY"
     X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
     X-XSS-Protection = "1; mode=block"
     Referrer-Policy = "strict-origin-when-cross-origin"
-    Permissions-Policy = "geolocation=(), microphone=(), camera=(), payment=()"
-    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https://*.netlify.app https://*.netlify.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
 
-[[redirects]]
-  from = "/api/*"
-  to = "/.netlify/functions/:splat"
-  status = 200
+# Environment variables (you can override these in Netlify UI)
+[build.processing]
+  skip_processing = false
+  
+[build.processing.css]
+  bundle = false
+  minify = true
+
+[build.processing.js]
+  bundle = false
+  minify = true
+
+[build.processing.html]
+  pretty_urls = true
