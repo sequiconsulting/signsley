@@ -1,26 +1,31 @@
 [build]
-  # Build command for Python backend
-  command = "pip install -r api/requirements.txt && python -m api.build_static"
-  # Publish directory
-  publish = "dist"
+  # No build command needed for static site + serverless functions
+  command = ""
+  # Publish directory for static files
+  publish = "."
   # Functions directory for Python serverless functions
   functions = "netlify/functions"
 
 [build.environment]
+  # Force Python 3.11 (override default 3.8)
   PYTHON_VERSION = "3.11"
   # Set environment for production
   ENVIRONMENT = "production"
+  # Ensure pip is available
+  PIP_UPGRADE = "true"
 
-# Python runtime for Netlify Functions
+# Python runtime configuration for Netlify Functions
 [functions]
-  # Use Python 3.11 runtime
+  # Explicitly set Python 3.11 runtime
   runtime = "python3.11"
-  # Set timeout to 30 seconds for signature verification
-  timeout = 30
+  # Set timeout to 60 seconds for complex signature verification
+  timeout = 60
   # Enable large payloads for PDF files
   max_age = 0
+  # Include layer with additional Python packages
+  included_files = ["api/**"]
 
-# Redirect API calls to Python functions
+# API endpoint redirects - map /api/* to Python functions
 [[redirects]]
   from = "/api/verify-pades"
   to = "/.netlify/functions/verify-pades"
@@ -45,13 +50,13 @@
   status = 200
   force = true
 
-# Serve static files
+# Serve static files (SPA fallback)
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
 
-# Headers for security and CORS
+# Security and CORS headers
 [[headers]]
   for = "/api/*"
   [headers.values]
@@ -72,7 +77,7 @@
     X-XSS-Protection = "1; mode=block"
     Referrer-Policy = "strict-origin-when-cross-origin"
 
-# Environment variables (you can override these in Netlify UI)
+# Processing settings
 [build.processing]
   skip_processing = false
   
