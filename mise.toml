@@ -1,0 +1,9 @@
+[tools]
+python = "3.11.14"
+
+[env]
+# Ensure pip is available and upgraded
+PIP_UPGRADE = "true"
+
+[tasks]
+# Netlify will not run tasks, but this file ensures mise sets Python properly
