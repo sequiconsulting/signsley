@@ -7,6 +7,10 @@
   PYTHON_VERSION = "3.11"
   ENVIRONMENT = "production"
   PIP_UPGRADE = "true"
+  NETLIFY_SKIP_INSTALL = "true"
+  NPM_FLAGS = "--no-audit --no-fund"
+  YARN_FLAGS = "--ignore-scripts"
+  PIP_DISABLE_PIP_VERSION_CHECK = "1"
 
 [functions]
   runtime = "python3.11"
