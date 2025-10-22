@@ -1,31 +1,19 @@
 [build]
-  # No build command needed for static site + serverless functions
-  command = ""
-  # Publish directory for static files
+  command = "python -m ensurepip --upgrade && python -m pip install --upgrade pip setuptools wheel && python -m pip install -r requirements.txt"
   publish = "."
-  # Functions directory for Python serverless functions
   functions = "netlify/functions"
 
 [build.environment]
-  # Force Python 3.11 (override default 3.8)
   PYTHON_VERSION = "3.11"
-  # Set environment for production
   ENVIRONMENT = "production"
-  # Ensure pip is available
   PIP_UPGRADE = "true"
 
-# Python runtime configuration for Netlify Functions
 [functions]
-  # Explicitly set Python 3.11 runtime
   runtime = "python3.11"
-  # Set timeout to 60 seconds for complex signature verification
   timeout = 60
-  # Enable large payloads for PDF files
   max_age = 0
-  # Include layer with additional Python packages
   included_files = ["api/**"]
 
-# API endpoint redirects - map /api/* to Python functions
 [[redirects]]
   from = "/api/verify-pades"
   to = "/.netlify/functions/verify-pades"
@@ -50,13 +38,11 @@
   status = 200
   force = true
 
-# Serve static files (SPA fallback)
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
 
-# Security and CORS headers
 [[headers]]
   for = "/api/*"
   [headers.values]
@@ -77,7 +63,6 @@
     X-XSS-Protection = "1; mode=block"
     Referrer-Policy = "strict-origin-when-cross-origin"
 
-# Processing settings
 [build.processing]
   skip_processing = false
   
