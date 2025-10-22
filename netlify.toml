@@ -1,5 +1,5 @@
 [build]
-  command = "python -m ensurepip --upgrade && python -m pip install --upgrade pip setuptools wheel && python -m pip install -r requirements.txt"
+  command = "bash netlify-build.sh"
   publish = "."
   functions = "netlify/functions"
 
