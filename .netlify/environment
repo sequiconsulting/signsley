@@ -1,5 +1,0 @@
-# Prevent Netlify global pip install step; we manage installs via build command and functions requirements
-NETLIFY_SKIP_INSTALL=1
-PYTHON_VERSION=3.11
-PIP_NO_PYTHON_VERSION_WARNING=1
-PIP_DISABLE_PIP_VERSION_CHECK=1
